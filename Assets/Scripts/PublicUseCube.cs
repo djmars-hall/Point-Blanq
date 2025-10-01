@@ -5,11 +5,11 @@ using UnityEngine;
 
 public class PublicUseCube : NetworkBehaviour
 {
-    [SerializeField] float speed = 1.0f;
+    [SerializeField] float speed = 2.5f;
 
     void Update()
     {
-        if (!IsOwner) return; // Only the owner (Host or owning client) can move the cube
+        if (!IsOwner) return; // Only the owner (Host or owning client) can move the cube --except it doesnt work for owning clients
 
         float h = Input.GetAxis("Horizontal");
         float v = Input.GetAxis("Vertical");
@@ -18,7 +18,7 @@ public class PublicUseCube : NetworkBehaviour
         if (move != Vector3.zero)
         {
             Vector3 newPos = transform.position + move;
-            SubmitPositionRequestServerRpc(newPos);
+            SubmitPositionRequestServerRpc(newPos);     //this can only be done by the Host
         }
     }
 

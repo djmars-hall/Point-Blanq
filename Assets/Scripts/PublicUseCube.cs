@@ -5,7 +5,7 @@ using UnityEngine;
 
 public class PublicUseCube : NetworkBehaviour
 {
-    [SerializeField] float speed = 2.5f;
+    [SerializeField] float speed = 3.5f;
 
     void Update()
     {

@@ -13,8 +13,8 @@ public class InfoDump : MonoBehaviour
         //counter++;
         //GUI.Label(new Rect(10, 120, 200, 20), $"{counter}");
 
-        
-        if(!NetworkManager.Singleton.IsHost && !NetworkManager.Singleton.IsServer) { return; }
+        if (!NetworkManager.Singleton) return;
+        if (!NetworkManager.Singleton.IsHost && !NetworkManager.Singleton.IsServer) return;
 
         for(int i = 0; i < NetworkManager.Singleton.ConnectedClientsList.Count; i++)
         {

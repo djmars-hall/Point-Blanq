@@ -9,8 +9,6 @@ public class PublicUseCube : NetworkBehaviour
 
     void Update()
     {
-        if (!IsOwner) return; // Only the owner (Host or owning client) can move the cube --except it doesnt work for owning clients
-
         float h = Input.GetAxis("Horizontal");
         float v = Input.GetAxis("Vertical");
 
@@ -18,21 +16,16 @@ public class PublicUseCube : NetworkBehaviour
         if (move != Vector3.zero)
         {
             Vector3 newPos = transform.position + move;
-            SubmitPositionRequestServerRpc(newPos);     //this can only be done by the Host
+            transform.position = newPos;
+            UpdatePositionClientRpc(newPos);
         }
     }
 
-    [ServerRpc]
-    void SubmitPositionRequestServerRpc(Vector3 pos)
-    {
-        // The Host receives the position and broadcasts it to all clients
-        UpdatePositionClientRpc(pos);
-    }
-
-    [ClientRpc]
+    [Rpc(SendTo.NotMe, Delivery = RpcDelivery.Unreliable)]
     void UpdatePositionClientRpc(Vector3 pos)
     {
         transform.position = pos;
+        Debug.Log("NOT_ME");
     }
 
 }

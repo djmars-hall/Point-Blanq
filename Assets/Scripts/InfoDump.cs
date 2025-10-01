@@ -18,7 +18,7 @@ public class InfoDump : MonoBehaviour
 
         for(int i = 0; i < NetworkManager.Singleton.ConnectedClientsList.Count; i++)
         {
-            GUI.Label(new Rect(10, 120*i, 200, 20), $"{ NetworkManager.Singleton.ConnectedClientsList[i].ClientId}");
+            GUI.Label(new Rect(10, 40*i, 200, 20), $"{ NetworkManager.Singleton.ConnectedClientsList[i].ClientId}");
         }
     }
 }

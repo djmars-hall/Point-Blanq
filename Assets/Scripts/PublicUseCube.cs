@@ -5,28 +5,34 @@ using UnityEngine;
 
 public class PublicUseCube : NetworkBehaviour
 {
-    //[SerializeField] private Transform tranform;
     [SerializeField] float speed = 1.0f;
 
-    // Start is called before the first frame update
-    void Start()
-    {
-        
-    }
-
-    // Update is called once per frame
     void Update()
     {
+        if (!IsOwner) return; // Only the owner (Host or owning client) can move the cube
+
         float h = Input.GetAxis("Horizontal");
         float v = Input.GetAxis("Vertical");
 
-
-        transform.position += new Vector3(h*Time.deltaTime * speed, 0, v*Time.deltaTime * speed);
-
-
+        Vector3 move = new Vector3(h * Time.deltaTime * speed, 0, v * Time.deltaTime * speed);
+        if (move != Vector3.zero)
+        {
+            Vector3 newPos = transform.position + move;
+            SubmitPositionRequestServerRpc(newPos);
+        }
     }
 
-    //[Rpc(SendTo.ClientsAndHost)]
-    void NetworkRPCPositionLol(Vector3 pos, ulong netId) => transform.position = pos;
+    [ServerRpc]
+    void SubmitPositionRequestServerRpc(Vector3 pos)
+    {
+        // The Host receives the position and broadcasts it to all clients
+        UpdatePositionClientRpc(pos);
+    }
+
+    [ClientRpc]
+    void UpdatePositionClientRpc(Vector3 pos)
+    {
+        transform.position = pos;
+    }
 
 }

@@ -12,7 +12,7 @@ public class NetworkAddUser : MonoBehaviour
 
     private void Start()
     {
-        NetworkManager.Singleton.GetComponent<UnityTransport>().SetConnectionData("127.0.0.1", (ushort)7772);
+        NetworkManager.Singleton.GetComponent<UnityTransport>().SetConnectionData("0.0.0.0", (ushort)7772);
     }
 
     private void Update()

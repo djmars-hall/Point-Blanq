@@ -35,6 +35,7 @@ public class NetworkAddUser : MonoBehaviour
 
     public void ApplyIP()
     {
+        Debug.Log("Applied : " + ip_field.text);
         NetworkManager.Singleton.GetComponent<UnityTransport>().SetConnectionData(ip_field.text, (ushort)7772);
     }
 

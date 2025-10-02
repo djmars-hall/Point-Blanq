@@ -15,10 +15,18 @@ public class GameManager : NetworkBehaviour
 
         if (Input.GetKeyDown(KeyCode.M))
         {
-            for(int i = 0; i < Mathf.Min(privateCubes.Count, NetworkManager.Singleton.ConnectedClientsList.Count); i++)
+            for(int i = 0; i < privateCubes.Count; i++)
             {
-                ulong clientId = NetworkManager.Singleton.ConnectedClientsList[i].ClientId;
-                privateCubes[i].GetComponent<NetworkObject>().ChangeOwnership(clientId);
+                if(i < NetworkManager.Singleton.ConnectedClientsList.Count)
+                {
+                    ulong clientId = NetworkManager.Singleton.ConnectedClientsList[i].ClientId;
+                    privateCubes[i].GetComponent<NetworkObject>().ChangeOwnership(clientId);
+                    privateCubes[i].ParentCameraRpc();
+                }
+                else
+                {
+                    privateCubes[i].gameObject.SetActive(false);
+                }
             }
         }
     }

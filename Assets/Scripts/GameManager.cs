@@ -8,16 +8,6 @@ public class GameManager : NetworkBehaviour
 {
     [SerializeField] private List<PrivateUseCube> privateCubes;
 
-
-
-
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
-    {
-
-
-    }
-
     // Update is called once per frame
     void Update()
     {
@@ -31,7 +21,5 @@ public class GameManager : NetworkBehaviour
                 privateCubes[i].GetComponent<NetworkObject>().ChangeOwnership(clientId);
             }
         }
-
-
     }
 }

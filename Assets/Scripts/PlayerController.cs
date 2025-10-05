@@ -43,7 +43,7 @@ public class PlayerController : CharacterController
         {
             if (!isAiming)
             {
-                characterAnimator.Play("RaiseGun", 0, 0);
+                PullOutGunRpc();
                 isAiming = true;
             }
 
@@ -52,7 +52,7 @@ public class PlayerController : CharacterController
         {
             if (isAiming)
             {
-                characterAnimator.Play("Default", 0, 0);
+                PutAwayGunRpc();
                 isAiming = false;
             }
         }
@@ -80,7 +80,7 @@ public class PlayerController : CharacterController
 
     public void Shoot(InputAction.CallbackContext obj)
     {
-        Debug.Log("BANG");
+        ShootRpc();
     }
 
     //Network Code
@@ -101,4 +101,22 @@ public class PlayerController : CharacterController
         Camera.main.transform.localPosition = Vector3.zero;
         Camera.main.transform.localRotation = Quaternion.identity;
     }
+
+    [Rpc(SendTo.Everyone)]
+    public void PullOutGunRpc()
+    {
+        characterAnimator.Play("RaiseGun", 0, 0);
+    }
+    [Rpc(SendTo.Everyone)]
+    public void PutAwayGunRpc()
+    {
+        characterAnimator.Play("Default", 0, 0);
+    }
+
+    [Rpc(SendTo.Everyone)]
+    public void ShootRpc()
+    {
+        Debug.Log("BANG");
+    }
+
 }

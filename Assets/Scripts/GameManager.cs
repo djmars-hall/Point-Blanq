@@ -6,7 +6,7 @@ using NUnit.Framework;
 
 public class GameManager : NetworkBehaviour
 {
-    [SerializeField] private List<PrivateUseCube> privateCubes;
+    [SerializeField] private List<PlayerController> players;
 
     // Update is called once per frame
     void Update()
@@ -15,17 +15,17 @@ public class GameManager : NetworkBehaviour
 
         if (Input.GetKeyDown(KeyCode.M))
         {
-            for(int i = 0; i < privateCubes.Count; i++)
+            for(int i = 0; i < players.Count; i++)
             {
                 if(i < NetworkManager.Singleton.ConnectedClientsList.Count)
                 {
                     ulong clientId = NetworkManager.Singleton.ConnectedClientsList[i].ClientId;
-                    privateCubes[i].GetComponent<NetworkObject>().ChangeOwnership(clientId);
-                    privateCubes[i].ParentCameraRpc();
+                    players[i].GetComponent<NetworkObject>().ChangeOwnership(clientId);
+                    players[i].ParentCameraRpc();
                 }
                 else
                 {
-                    privateCubes[i].gameObject.SetActive(false);
+                    players[i].gameObject.SetActive(false);
                 }
             }
         }

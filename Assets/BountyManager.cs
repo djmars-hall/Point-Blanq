@@ -43,7 +43,7 @@ public class BountyManager : MonoBehaviour
     }
 
     [Rpc(SendTo.Everyone)]
-    public static void NewEntry(ulong clientId, GameObject obj)
+    public void NewEntry(ulong clientId, GameObject obj)
     {
         BountyManager.PlayerEntry newEntry = new BountyManager.PlayerEntry();
         newEntry.PlayerClient = clientId;

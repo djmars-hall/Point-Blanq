@@ -112,7 +112,7 @@ public class PlayerController : CharacterController
                 {
                     Debug.Log("A player was hit! " + back_hit);
                 }
-                BountyManager.Instance.CheckKill(npc_hit, OwnerClientId, hit_player_id, 
+                BountyManager.Instance.CheckKillRpc(npc_hit, OwnerClientId, hit_player_id, 
                     Vector3.Distance(transform.position, hit.transform.position), 
                     back_hit);
             }

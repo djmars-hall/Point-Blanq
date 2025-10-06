@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
-public class BountyManager : MonoBehaviour
+public class BountyManager : NetworkBehaviour
 {
     public static BountyManager Instance;
 
@@ -27,8 +27,6 @@ public class BountyManager : MonoBehaviour
         [Header("Player Information:")]
         public ulong PlayerClient;
 
-        public GameObject currentObject;
-
         public int points;
 
         [Header("Bounty Information:")]
@@ -43,11 +41,10 @@ public class BountyManager : MonoBehaviour
     }
 
     [Rpc(SendTo.Everyone)]
-    public void NewEntry(ulong clientId, GameObject obj)
+    public void NewEntryRpc(ulong clientId)
     {
         BountyManager.PlayerEntry newEntry = new BountyManager.PlayerEntry();
         newEntry.PlayerClient = clientId;
-        newEntry.currentObject = obj;
 
         BountyManager.Instance.players.Add(newEntry);
     }
@@ -60,7 +57,7 @@ public class BountyManager : MonoBehaviour
     /// <param name="distance">Distance between the shooter and the target.</param>
     /// <param name="shotFromBehind">Whether or not the target was hit in the back or not.</param>
     [Rpc(SendTo.Server)]
-    public void CheckKill(bool npc_kill, ulong shooter, ulong target, float distance, bool shotFromBehind)
+    public void CheckKillRpc(bool npc_kill, ulong shooter, ulong target, float distance, bool shotFromBehind)
     {
         PlayerEntry shooterPlayer = null;
         PlayerEntry targetPlayer = null;
@@ -82,7 +79,7 @@ public class BountyManager : MonoBehaviour
         //Check for Points
         if (targetPlayer == null) //Hit an Npc
         {
-            UpdatePoints(shooterPlayer, penalty);
+            UpdatePointsRpc(shooter, penalty);
         }
         else //Hit a Player
         {
@@ -92,20 +89,20 @@ public class BountyManager : MonoBehaviour
                 float totalPoints = kill;
                 //Multipliers
                 if (shotFromBehind) totalPoints *= backShotMultiplier;
-                UpdatePoints(shooterPlayer, (int)totalPoints);
+                UpdatePointsRpc(shooter, (int)totalPoints);
             }
             else
-            UpdatePoints(shooterPlayer, penalty);
+            UpdatePointsRpc(shooter, penalty);
         }
 
     }
 
     [Rpc(SendTo.Everyone)]
-    public void UpdatePoints(PlayerEntry player, int value)
+    public void UpdatePointsRpc(ulong client_id, int value)
     {
         foreach(PlayerEntry _player in players)
         {
-            if (_player == player)
+            if (client_id == _player.PlayerClient)
             {
                 _player.points += value;
             }

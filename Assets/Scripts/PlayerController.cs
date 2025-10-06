@@ -27,8 +27,7 @@ public class PlayerController : CharacterController
         float h = moveDir.x;
         float v = moveDir.y;
 
-        float rot = h * Time.deltaTime * speed * rotationSpeed;
-
+        /*
         Vector3 move = new Vector3(0, 0, v * Time.deltaTime * speed);
         if (move != Vector3.zero || rot != 0)
         {
@@ -37,6 +36,8 @@ public class PlayerController : CharacterController
             transform.Rotate(new Vector3(0, rot, 0));
             UpdatePositionClientRpc(newPos, transform.rotation);
         }
+        */
+        ProcessMovement(v, h);
 
         //Aiming
         if (aimValue > aimThreshold)

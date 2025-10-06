@@ -82,6 +82,8 @@ public class PlayerController : CharacterController
 
     public void Shoot(InputAction.CallbackContext obj)
     {
+        if (!isAiming) return;
+
         // Networked shooting logic
         ShootRpc();
         // Local raycast checking, and reporting hit to host

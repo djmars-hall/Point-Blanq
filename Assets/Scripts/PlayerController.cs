@@ -10,6 +10,7 @@ public class PlayerController : CharacterController
     public InputActionReference move;
     public InputActionReference aim;
     public InputActionReference shoot;
+    public Transform muzzle;
 
     private Vector2 moveDir;
     //private Vector2 aimDir;
@@ -81,7 +82,39 @@ public class PlayerController : CharacterController
 
     public void Shoot(InputAction.CallbackContext obj)
     {
+        // Networked shooting logic
         ShootRpc();
+        // Local raycast checking, and reporting hit to host
+        RaycastHit hit;
+        if (Physics.Raycast(muzzle.position, muzzle.forward, out hit, 10))
+        {
+            Debug.Log(hit.transform.gameObject.name);
+            CharacterController hit_cc = hit.transform.GetComponent<CharacterController>();
+            bool back_hit = false;
+            bool npc_hit = false;
+            if (hit_cc == null && hit.transform.tag == "back_target")
+            {
+                hit_cc = hit.transform.parent.GetComponent<CharacterController>();
+                back_hit = true;
+                Debug.Log("Back hit!");
+            }
+            if (hit_cc is CharacterController)
+            {
+                ulong hit_player_id = hit_cc.OwnerClientId;
+                if (hit_cc is NPCController)
+                {
+                    Debug.Log("An NPC was hit! " + back_hit);
+                    npc_hit = true;
+                }
+                else if (hit_cc is PlayerController)
+                {
+                    Debug.Log("A player was hit! " + back_hit);
+                }
+                BountyManager.Instance.CheckKill(npc_hit, OwnerClientId, hit_player_id, 
+                    Vector3.Distance(transform.position, hit.transform.position), 
+                    back_hit);
+            }
+        }
     }
 
     //Network Code

@@ -49,7 +49,8 @@ public class BountyManager : MonoBehaviour
     /// <param name="target">The character being shot.</param>
     /// <param name="distance">Distance between the shooter and the target.</param>
     /// <param name="shotFromBehind">Whether or not the target was hit in the back or not.</param>
-    public void CheckKill(GameObject shooter, GameObject target, float distance, bool shotFromBehind)
+    [Rpc(SendTo.Server)]
+    public void CheckKill(bool npc_kill, ulong shooter, ulong target, float distance, bool shotFromBehind)
     {
         PlayerEntry shooterPlayer = null;
         PlayerEntry targetPlayer = null;
@@ -57,7 +58,7 @@ public class BountyManager : MonoBehaviour
         //Check Shooter Validity
         foreach(PlayerEntry player in players)
         {
-            if (player.currentObject == shooter) shooterPlayer = player;
+            if (player.PlayerClient == shooter) shooterPlayer = player;
         }
 
         if (shooterPlayer == null) return;
@@ -65,7 +66,7 @@ public class BountyManager : MonoBehaviour
         //Check Target Validity
         foreach (PlayerEntry player in players)
         {
-            if (player.currentObject == target) targetPlayer = player;
+            if (player.PlayerClient == target) targetPlayer = player;
         }
 
         //Check for Points

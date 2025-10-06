@@ -1844,6 +1844,58 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1171237226}
   m_CullTransparentMesh: 1
+--- !u!1 &1354639545
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1354639547}
+  - component: {fileID: 1354639546}
+  m_Layer: 0
+  m_Name: BountyManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1354639546
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1354639545}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a500737b540f8884483346d31c9b5749, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  kill: 500
+  penalty: -200
+  pointBlank: {x: 0, y: 0}
+  close: {x: 0, y: 0}
+  medium: {x: 0, y: 0}
+  far: {x: 0, y: 0}
+  backShotMultiplier: 0
+  players: []
+--- !u!4 &1354639547
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1354639545}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 8.6883335, y: -13.821256, z: -5.349053}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1380188546
 GameObject:
   m_ObjectHideFlags: 0
@@ -2553,6 +2605,7 @@ SceneRoots:
   - {fileID: 857921117}
   - {fileID: 1494442338}
   - {fileID: 828745407}
+  - {fileID: 1354639547}
   - {fileID: 37141027}
   - {fileID: 433560053}
   - {fileID: 1554734726}

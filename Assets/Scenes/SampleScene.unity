@@ -2262,7 +2262,7 @@ MonoBehaviour:
   close: {x: 0, y: 0}
   medium: {x: 0, y: 0}
   far: {x: 0, y: 0}
-  backShotMultiplier: 0
+  backShotMultiplier: 2
   players: []
 --- !u!4 &1354639547
 Transform:

@@ -90,6 +90,7 @@ public class BountyManager : MonoBehaviour
 
     }
 
+    [Rpc(SendTo.Everyone)]
     public void UpdatePoints(PlayerEntry player, int value)
     {
         foreach(PlayerEntry _player in players)

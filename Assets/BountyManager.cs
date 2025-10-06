@@ -1,8 +1,9 @@
+using NUnit.Framework;
 using System.Collections;
 using System.Collections.Generic;
-using UnityEngine;
 using Unity.Netcode;
-using NUnit.Framework;
+using UnityEditor.PackageManager;
+using UnityEngine;
 
 public class BountyManager : MonoBehaviour
 {
@@ -40,6 +41,16 @@ public class BountyManager : MonoBehaviour
     private void Awake()
     {
         Instance = this;
+    }
+
+    [Rpc(SendTo.Everyone)]
+    public static void NewEntry(ulong clientId, GameObject obj)
+    {
+        BountyManager.PlayerEntry newEntry = new BountyManager.PlayerEntry();
+        newEntry.PlayerClient = clientId;
+        newEntry.currentObject = obj;
+
+        BountyManager.Instance.players.Add(newEntry);
     }
 
     /// <summary>

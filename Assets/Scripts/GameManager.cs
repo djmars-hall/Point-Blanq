@@ -24,11 +24,7 @@ public class GameManager : NetworkBehaviour
                     players[i].ParentCameraRpc();
 
                     //Update Bounty Manager
-                    BountyManager.PlayerEntry newEntry = new BountyManager.PlayerEntry();
-                    newEntry.PlayerClient = clientId;
-                    newEntry.currentObject = players[i].gameObject;
-
-                    BountyManager.Instance.players.Add(newEntry);
+                    BountyManager.NewEntry(clientId, players[i].gameObject);
                 }
                 else
                 {

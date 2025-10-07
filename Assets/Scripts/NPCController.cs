@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using UnityEngine;
+using Unity.Netcode;
 
 public class NPCController : CharacterController
 {
@@ -70,6 +71,20 @@ public class NPCController : CharacterController
         }
     }
 
+    [Rpc(SendTo.Everyone)]
+    public void AssignSlotRpc(int materialIndex)
+    {
+        Material playerMaterial = BountyManager.Instance.playerMaterials[materialIndex];
 
-
+        //Find next available spot in list
+        for (int i = 0; i < NPCManager.Instance.npcList.Length; i++)
+        {
+            if (NPCManager.Instance.npcList[i] == null)
+            {
+                NPCManager.Instance.npcList[i] = this;
+                this.name = "" + playerMaterial.name + " " + (i + 1);
+                break;
+            }
+        }
+    }
 }

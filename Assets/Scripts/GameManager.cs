@@ -31,6 +31,9 @@ public class GameManager : NetworkBehaviour
                     players[i].gameObject.SetActive(false);
                 }
             }
+
+            //Initialize Spawner
+            NPCManager.Instance.Initialize();
         }
     }
 }

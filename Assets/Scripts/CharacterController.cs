@@ -8,6 +8,8 @@ public class CharacterController : NetworkBehaviour
 
     public Animator characterAnimator;
 
+    public MeshRenderer[] meshes;
+
     void Start()
     {
     }
@@ -35,4 +37,12 @@ public class CharacterController : NetworkBehaviour
         transform.rotation = rot;
     }
 
+    [Rpc(SendTo.Everyone)]
+    public void ReplaceMaterialRpc(int materialIndex = 0)
+    {
+        foreach (MeshRenderer renderer in meshes)
+        {
+            renderer.material = BountyManager.Instance.playerMaterials[materialIndex];
+        }
+    }
 }

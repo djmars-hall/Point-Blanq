@@ -35,6 +35,8 @@ public class BountyManager : NetworkBehaviour
 
     public List<PlayerEntry> players = new List<PlayerEntry>();
 
+    public Material[] playerMaterials;
+
     private void Awake()
     {
         Instance = this;

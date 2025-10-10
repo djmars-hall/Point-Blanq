@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
 using Unity.VisualScripting;
+using Unity.Services.Matchmaker.Models;
 
 public class PlayerController : CharacterController
 {
@@ -20,13 +21,18 @@ public class PlayerController : CharacterController
 
     public bool isAiming;
 
+    private Rigidbody rigidbody;
+
+    private void Start()
+    {
+        rigidbody = GetComponent<Rigidbody>();
+    }
+
     void Update()
     {
         if (!IsOwner) { return; }
 
-        //Movement
-        float h = moveDir.x;
-        float v = moveDir.y;
+        
 
         /*
         Vector3 move = new Vector3(0, 0, v * Time.deltaTime * speed);
@@ -38,7 +44,11 @@ public class PlayerController : CharacterController
             UpdatePositionClientRpc(newPos, transform.rotation);
         }
         */
-        ProcessMovement(v, h);
+
+        
+
+
+
 
         //Aiming
         if (aimValue > aimThreshold)
@@ -60,8 +70,35 @@ public class PlayerController : CharacterController
         }
     }
 
+
+    void FixedUpdate()
+    {
+        if (!IsOwner) { return; }
+        //Movement
+        float h = moveDir.x;
+        float v = moveDir.y;
+
+        ProcessMovement(v, h, false);
+    }
+    protected void ProcessMovement(float forward_movement, float rotation_dir, bool use_rigidbody = true)
+    {
+        float rot = rotation_dir * Time.deltaTime * speed * rotationSpeed;
+        Vector3 move = new Vector3(0, 0, forward_movement * Time.deltaTime * speed);
+        if (move != Vector3.zero || rot != 0)
+        {
+            Vector3 newPos = transform.position + move.z * transform.forward;
+            rigidbody.MovePosition(newPos);
+            //transform.position = newPos;
+            transform.Rotate(new Vector3(0, rot, 0));
+            UpdatePositionClientRpc(rigidbody.position, transform.rotation);
+        }
+    }
+
+
     private void LateUpdate()
     {
+        Debug.LogWarning("Should this only happen for the owner?");
+
         //Movement
         moveDir = move.action.ReadValue<Vector2>();
         //aimDir = aim.action.ReadValue<Vector2>();

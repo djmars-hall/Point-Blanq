@@ -561,6 +561,7 @@ GameObject:
   - component: {fileID: 8681475559643144664}
   - component: {fileID: 8094929567051120562}
   - component: {fileID: 4798932848759817140}
+  - component: {fileID: 1520773452903490848}
   m_Layer: 0
   m_Name: Character
   m_TagString: Untagged
@@ -601,7 +602,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 1816812568
+  GlobalObjectIdHash: 2352614690
   InScenePlacedSourceGlobalObjectIdHash: 2352614690
   DeferredDespawnTick: 0
   Ownership: 0
@@ -630,6 +631,7 @@ MonoBehaviour:
   speed: 3.5
   rotationSpeed: 60
   characterAnimator: {fileID: 8094929567051120562}
+  meshes: []
   inputActions: {fileID: -944628639613478452, guid: 55d82465d41c0e740b9f7ac9b02c64f0, type: 3}
   move: {fileID: -2484328267483681313, guid: 55d82465d41c0e740b9f7ac9b02c64f0, type: 3}
   aim: {fileID: -1972157434598913931, guid: 55d82465d41c0e740b9f7ac9b02c64f0, type: 3}
@@ -682,3 +684,30 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 1, z: 0}
+--- !u!54 &1520773452903490848
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9168965175183790033}
+  serializedVersion: 4
+  m_Mass: 1
+  m_Drag: 0
+  m_AngularDrag: 0.05
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_UseGravity: 1
+  m_IsKinematic: 0
+  m_Interpolate: 0
+  m_Constraints: 116
+  m_CollisionDetection: 0

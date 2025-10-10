@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.Netcode;
+using System;
 
 public class CharacterController : NetworkBehaviour
 {
@@ -29,6 +30,7 @@ public class CharacterController : NetworkBehaviour
             UpdatePositionClientRpc(newPos, transform.rotation);
         }
     }
+
 
     [Rpc(SendTo.NotMe, Delivery = RpcDelivery.Unreliable)]
     void UpdatePositionClientRpc(Vector3 pos, Quaternion rot)

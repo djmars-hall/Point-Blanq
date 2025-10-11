@@ -21,7 +21,7 @@ public class NPCManager : NetworkBehaviour
     [Header("NPC Master List:")]
     public NPCController[] npcList;
 
-    [Header("Gathering Area")]
+    [Header("Gathering Area List:")]
     [SerializeField] private Transform gatheringAreaParent;
     [SerializeField] internal GatheringArea[] gatheringAreas;
 

@@ -6,6 +6,15 @@ public class GatheringArea : MonoBehaviour
     public Vector3 size = new Vector3(5, 1, 5);
     public Color gizmoColor = Color.red;
 
+    public Vector3 GetRandomPointInArea()
+    {
+        Vector3 halfSize = size * 0.5f;
+        float x = Random.Range(-halfSize.x, halfSize.x);
+        float y = 0f;
+        float z = Random.Range(-halfSize.z, halfSize.z);
+        return transform.position + new Vector3(x, y, z);
+    }
+
     private void OnDrawGizmos()
     {
         Gizmos.color = gizmoColor;

@@ -40,8 +40,8 @@ public class NPCController : CharacterController
         // Pick a random GatheringArea
         GatheringArea area = areas[Random.Range(0, areas.Length)];
 
-        // Use the center of the area as the waypoint (or use a method for a random point within)
-        Vector3 targetPoint = area.transform.position;
+        // Use a random point within the area as the waypoint
+        Vector3 targetPoint = area.GetRandomPointInArea();
 
         NavMeshHit hit;
         if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
@@ -50,62 +50,74 @@ public class NPCController : CharacterController
             navMeshAgent.SetDestination(current_waypoint);
             waypoint_time = Random.Range(3.0f, 8.0f);
             microState = NPCStatesMicro.Walking;
+
+            //not networking yet
+            //newWaypointRpc(current_waypoint, waypoint_time);
         }
-
-        //Vector3 randomDirection = Random.insideUnitSphere * 5f;
-        //randomDirection.y = 0;
-        //Vector3 candidate = transform.position + randomDirection;
-
-        //NavMeshHit hit;
-        //if (NavMesh.SamplePosition(candidate, out hit, 5f, NavMesh.AllAreas))
-        //{
-        //    current_waypoint = hit.position;
-        //    navMeshAgent.SetDestination(current_waypoint);
-        //    waypoint_time = Random.Range(3.0f, 8.0f);
-        //    microState = NPCStatesMicro.Walking;
-        //}
-        /*
-                current_waypoint = transform.position + 
-                    new Vector3(Random.Range(-5,5),0,Random.Range(-5, 5));
-                waypoint_time = Random.Range(1.0f, 3.0f);
-                microState = NPCStatesMicro.Turning;
-        */
     }
 
-    void Update()
+    void FixedUpdate()
     {
         if (!IsOwner) { return; }
+
+        //should this really have to happen? If we're already updating it whenever they get new waypoints?
+        UpdatePositionClientRpc(transform.position, transform.rotation);
+
         switch (microState)
         {
             case NPCStatesMicro.Standing:
-                break;
-            case NPCStatesMicro.Walking:
-                ProcessMovement(1, 0);
-                if (Vector3.Distance(transform.position, current_waypoint) < 0.2f)
+
+                waypoint_time -= Time.deltaTime;
+                if (waypoint_time <= 0.0f)
                 {
-                    microState = NPCStatesMicro.Standing;
+                    NewWaypoint();
                 }
 
                 break;
-            case NPCStatesMicro.Turning:
-                Vector3 directionToTarget = (current_waypoint - transform.position).normalized;
-                Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
-                float midpoint_to_target_angle = Mathf.LerpAngle(transform.rotation.eulerAngles.y, targetRotation.eulerAngles.y, 0.5f);
-                float midpoint_to_target_angle_diff = midpoint_to_target_angle-transform.rotation.eulerAngles.y;
-                float rot_dir = Mathf.Sign(midpoint_to_target_angle_diff);
-                ProcessMovement(0, rot_dir);
-                if (Mathf.Abs(midpoint_to_target_angle_diff) < Time.deltaTime * speed * rotationSpeed)
+            case NPCStatesMicro.Walking:
+
+                //Conditions to stop Walking:
+                if (!navMeshAgent.pathPending && navMeshAgent.remainingDistance <= navMeshAgent.stoppingDistance)
                 {
-                    transform.rotation = targetRotation;
-                    microState = NPCStatesMicro.Walking;
+                    microState = NPCStatesMicro.Standing;
                 }
                 break;
+            case NPCStatesMicro.Turning:
+                break;
+
+
+
+            //case NPCStatesMicro.Standing:
+            //    break;
+            //case NPCStatesMicro.Walking:
+            //    ProcessMovement(1, 0);
+            //    if (Vector3.Distance(transform.position, current_waypoint) < 0.2f)
+            //    {
+            //        microState = NPCStatesMicro.Standing;
+            //    }
+
+            //    break;
+            //case NPCStatesMicro.Turning:
+            //    Vector3 directionToTarget = (current_waypoint - transform.position).normalized;
+            //    Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
+            //    float midpoint_to_target_angle = Mathf.LerpAngle(transform.rotation.eulerAngles.y, targetRotation.eulerAngles.y, 0.5f);
+            //    float midpoint_to_target_angle_diff = midpoint_to_target_angle - transform.rotation.eulerAngles.y;
+            //    float rot_dir = Mathf.Sign(midpoint_to_target_angle_diff);
+            //    ProcessMovement(0, rot_dir);
+            //    if (Mathf.Abs(midpoint_to_target_angle_diff) < Time.deltaTime * speed * rotationSpeed)
+            //    {
+            //        transform.rotation = targetRotation;
+            //        microState = NPCStatesMicro.Walking;
+            //    }
+            //    break;
         }
-        waypoint_time -= Time.deltaTime;
-        if (waypoint_time <= 0.0f)
-        {
-            NewWaypoint();
-        }
+        
+        //waypoint_time -= Time.deltaTime;
+        //if (waypoint_time <= 0.0f)
+        //{
+        //    NewWaypoint();
+        //}
+        
     }
 
     [Rpc(SendTo.Everyone)]
@@ -124,4 +136,15 @@ public class NPCController : CharacterController
             }
         }
     }
+
+    
+    [Rpc(SendTo.NotMe)]
+    void newWaypointRpc(Vector3 cw, float wt)
+    {
+        waypoint_time = wt;
+        current_waypoint = cw;
+        navMeshAgent.SetDestination(current_waypoint);
+        microState = NPCStatesMicro.Walking;
+    }
+
 }

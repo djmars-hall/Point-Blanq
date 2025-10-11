@@ -33,7 +33,7 @@ public class CharacterController : NetworkBehaviour
 
 
     [Rpc(SendTo.NotMe, Delivery = RpcDelivery.Unreliable)]
-    void UpdatePositionClientRpc(Vector3 pos, Quaternion rot)
+    public void UpdatePositionClientRpc(Vector3 pos, Quaternion rot)
     {
         transform.position = pos;
         transform.rotation = rot;

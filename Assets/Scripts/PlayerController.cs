@@ -162,7 +162,6 @@ public class PlayerController : CharacterController
     {
         transform.position = pos;
         transform.rotation = rot;
-        Debug.Log("NOT_ME");
     }
 
     [Rpc(SendTo.Owner)]

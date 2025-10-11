@@ -2,7 +2,7 @@ using UnityEngine;
 
 public class FunSun : MonoBehaviour
 {
-    [SerializeField] float rotationSpeed = 0.15f; // degrees per second
+    [SerializeField] float rotationSpeed = 0.02f; // degrees per second
     private float currentXRot;
 
     void Start()

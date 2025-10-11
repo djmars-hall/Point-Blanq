@@ -1,9 +1,12 @@
 using System.Diagnostics;
 using UnityEngine;
 using Unity.Netcode;
+using UnityEngine.AI;
 
 public class NPCController : CharacterController
 {
+    private NavMeshAgent navMeshAgent;
+
 
     enum NPCStatesMicro
     {
@@ -24,16 +27,49 @@ public class NPCController : CharacterController
 
     private void Start()
     {
+        navMeshAgent = GetComponent<NavMeshAgent>();
         NewWaypoint();
         waypoint_time = 5.0f;
     }
 
     private void NewWaypoint()
     {
-        current_waypoint = transform.position + 
-            new Vector3(Random.Range(-5,5),0,Random.Range(-5, 5));
-        waypoint_time = Random.Range(1.0f, 3.0f);
-        microState = NPCStatesMicro.Turning;
+        var areas = NPCManager.Instance.gatheringAreas;
+        if (areas == null || areas.Length == 0) return;
+
+        // Pick a random GatheringArea
+        GatheringArea area = areas[Random.Range(0, areas.Length)];
+
+        // Use the center of the area as the waypoint (or use a method for a random point within)
+        Vector3 targetPoint = area.transform.position;
+
+        NavMeshHit hit;
+        if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
+        {
+            current_waypoint = hit.position;
+            navMeshAgent.SetDestination(current_waypoint);
+            waypoint_time = Random.Range(3.0f, 8.0f);
+            microState = NPCStatesMicro.Walking;
+        }
+
+        //Vector3 randomDirection = Random.insideUnitSphere * 5f;
+        //randomDirection.y = 0;
+        //Vector3 candidate = transform.position + randomDirection;
+
+        //NavMeshHit hit;
+        //if (NavMesh.SamplePosition(candidate, out hit, 5f, NavMesh.AllAreas))
+        //{
+        //    current_waypoint = hit.position;
+        //    navMeshAgent.SetDestination(current_waypoint);
+        //    waypoint_time = Random.Range(3.0f, 8.0f);
+        //    microState = NPCStatesMicro.Walking;
+        //}
+        /*
+                current_waypoint = transform.position + 
+                    new Vector3(Random.Range(-5,5),0,Random.Range(-5, 5));
+                waypoint_time = Random.Range(1.0f, 3.0f);
+                microState = NPCStatesMicro.Turning;
+        */
     }
 
     void Update()
@@ -44,11 +80,12 @@ public class NPCController : CharacterController
             case NPCStatesMicro.Standing:
                 break;
             case NPCStatesMicro.Walking:
-                ProcessMovement(1,0);
-                if (Vector3.Distance(transform.position,current_waypoint) < 0.2f)
+                ProcessMovement(1, 0);
+                if (Vector3.Distance(transform.position, current_waypoint) < 0.2f)
                 {
                     microState = NPCStatesMicro.Standing;
                 }
+
                 break;
             case NPCStatesMicro.Turning:
                 Vector3 directionToTarget = (current_waypoint - transform.position).normalized;

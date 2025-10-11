@@ -21,8 +21,17 @@ public class NPCManager : NetworkBehaviour
     [Header("NPC Master List:")]
     public NPCController[] npcList;
 
+    [Header("Gathering Area")]
+    [SerializeField] private Transform gatheringAreaParent;
+    [SerializeField] internal GatheringArea[] gatheringAreas;
+
     private void Awake()
     {
+        gatheringAreas = new GatheringArea[gatheringAreaParent.childCount];
+        for (int i = 0; i < gatheringAreaParent.childCount; i++)
+        {
+            gatheringAreas[i] = gatheringAreaParent.GetChild(i).GetComponent<GatheringArea>();
+        }
         Instance = this;
         npcList = new NPCController[maxNPCs];
     }
@@ -38,6 +47,7 @@ public class NPCManager : NetworkBehaviour
                 //newNPC.GetComponent<NetworkObject>().Spawn();
             }
         }
+        
     }
 
     public NPCController SpawnNPC(int materialIndex = 0)

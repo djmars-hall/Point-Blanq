@@ -3684,6 +3684,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
+  timeLeftInMatch: 30
   players:
   - {fileID: 1800148494}
   - {fileID: 659246451}

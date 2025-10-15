@@ -398,6 +398,10 @@ MonoBehaviour:
   meshes:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
+  avoidanceRadius: 4
+  avoidanceWeight: 1.1
+  minMoveSpeed: 0.3
+  turnAmplification: 2
 --- !u!136 &1842469610956331879
 CapsuleCollider:
   m_ObjectHideFlags: 0

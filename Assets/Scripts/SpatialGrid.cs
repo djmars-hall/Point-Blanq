@@ -1,0 +1,240 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>
+/// Grid-based spatial partitioning system for efficient neighbor queries.
+/// Divides the world into cells and tracks which NPCs are in each cell.
+/// </summary>
+public class SpatialGrid : MonoBehaviour
+{
+    public static SpatialGrid Instance;
+
+    [SerializeField] private float cellSize = 5f;
+    [SerializeField] private bool drawDebugGizmos = true;
+    [SerializeField] private bool drawCellBoundaries = true;
+    [SerializeField] private bool showCellPopulation = true;
+    [SerializeField] private Color emptyCellColor = new Color(0, 1, 0, 0.1f);
+    [SerializeField] private Color lowPopulationColor = new Color(1, 1, 0, 0.2f);
+    [SerializeField] private Color mediumPopulationColor = new Color(1, 0.5f, 0, 0.3f);
+    [SerializeField] private Color highPopulationColor = new Color(1, 0, 0, 0.4f);
+    [SerializeField] private int lowPopThreshold = 3;
+    [SerializeField] private int mediumPopThreshold = 7;
+
+    private Dictionary<Vector2Int, List<NPCController>> grid = new Dictionary<Vector2Int, List<NPCController>>();
+    private HashSet<Vector2Int> occupiedCells = new HashSet<Vector2Int>();
+    
+    // Stats tracking
+    private int totalNPCs = 0;
+    public int TotalNPCs => totalNPCs;
+    public int OccupiedCellCount => occupiedCells.Count;
+
+    [Header("Debug UI")]
+    [SerializeField] private bool showDebugUI = true;
+    [SerializeField] private Vector2 debugUIPosition = new Vector2(10, 10);
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    private void OnGUI()
+    {
+        if (!showDebugUI || !Application.isPlaying) return;
+
+        GUI.Box(new Rect(debugUIPosition.x, debugUIPosition.y, 250, 100), "Spatial Grid Debug");
+        
+        GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 25, 230, 20), 
+            $"Total NPCs: {totalNPCs}");
+        GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 45, 230, 20), 
+            $"Occupied Cells: {occupiedCells.Count}");
+        GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 65, 230, 20), 
+            $"Avg NPCs/Cell: {(occupiedCells.Count > 0 ? (float)totalNPCs / occupiedCells.Count : 0):F1}");
+    }
+
+    /// <summary>
+    /// Converts a world position to grid cell coordinates.
+    /// </summary>
+    public Vector2Int GetCellCoords(Vector3 worldPos)
+    {
+        return new Vector2Int(
+            Mathf.FloorToInt(worldPos.x / cellSize),
+            Mathf.FloorToInt(worldPos.z / cellSize)
+        );
+    }
+
+    /// <summary>
+    /// Registers an NPC in the grid at the specified cell.
+    /// </summary>
+    public void RegisterNPC(NPCController npc, Vector2Int cellCoords)
+    {
+        if (npc == null) return;
+
+        if (!grid.ContainsKey(cellCoords))
+        {
+            grid[cellCoords] = new List<NPCController>();
+        }
+
+        if (!grid[cellCoords].Contains(npc))
+        {
+            grid[cellCoords].Add(npc);
+            occupiedCells.Add(cellCoords);
+            totalNPCs++;
+        }
+    }
+
+    /// <summary>
+    /// Updates an NPC's cell membership when it moves between cells.
+    /// </summary>
+    public void UpdateNPC(NPCController npc, Vector2Int oldCell, Vector2Int newCell)
+    {
+        if (npc == null || oldCell == newCell) return;
+
+        // Remove from old cell
+        if (grid.ContainsKey(oldCell))
+        {
+            grid[oldCell].Remove(npc);
+            totalNPCs--;
+            
+            // Clean up empty cells
+            if (grid[oldCell].Count == 0)
+            {
+                grid.Remove(oldCell);
+                occupiedCells.Remove(oldCell);
+            }
+        }
+
+        // Add to new cell
+        RegisterNPC(npc, newCell);
+    }
+
+    /// <summary>
+    /// Unregisters an NPC from the grid.
+    /// </summary>
+    public void UnregisterNPC(NPCController npc, Vector2Int cellCoords)
+    {
+        if (npc == null) return;
+
+        if (grid.ContainsKey(cellCoords))
+        {
+            grid[cellCoords].Remove(npc);
+            totalNPCs--;
+            
+            // Clean up empty cells
+            if (grid[cellCoords].Count == 0)
+            {
+                grid.Remove(cellCoords);
+                occupiedCells.Remove(cellCoords);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets all NPCs in the current cell and 8 adjacent cells (3x3 grid).
+    /// </summary>
+    public List<NPCController> GetNearbyNPCs(Vector2Int cellCoords)
+    {
+        List<NPCController> nearby = new List<NPCController>();
+
+        // Check 3x3 grid
+        for (int x = -1; x <= 1; x++)
+        {
+            for (int z = -1; z <= 1; z++)
+            {
+                Vector2Int checkCell = cellCoords + new Vector2Int(x, z);
+                if (grid.TryGetValue(checkCell, out var npcsInCell))
+                {
+                    nearby.AddRange(npcsInCell);
+                }
+            }
+        }
+
+        return nearby;
+    }
+
+    /// <summary>
+    /// Gets the number of NPCs in a specific cell.
+    /// </summary>
+    public int GetCellPopulation(Vector2Int cellCoords)
+    {
+        if (grid.TryGetValue(cellCoords, out var npcsInCell))
+        {
+            return npcsInCell.Count;
+        }
+        return 0;
+    }
+
+    private Color GetCellColor(int population)
+    {
+        if (population == 0) return emptyCellColor;
+        if (population < lowPopThreshold) return lowPopulationColor;
+        if (population < mediumPopThreshold) return mediumPopulationColor;
+        return highPopulationColor;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!drawDebugGizmos || !Application.isPlaying) return;
+
+        // Draw all occupied cells
+        foreach (var cellCoords in occupiedCells)
+        {
+            Vector3 cellCenter = new Vector3(
+                cellCoords.x * cellSize + cellSize * 0.5f,
+                0.1f,
+                cellCoords.y * cellSize + cellSize * 0.5f
+            );
+
+            int population = GetCellPopulation(cellCoords);
+            Color cellColor = GetCellColor(population);
+
+            // Draw filled cell with color based on population
+            Gizmos.color = cellColor;
+            Gizmos.DrawCube(cellCenter + Vector3.up * 3f, new Vector3(cellSize, 0.1f, cellSize));
+
+            // Draw cell boundaries
+            if (drawCellBoundaries)
+            {
+                Gizmos.color = Color.white;
+                Gizmos.DrawWireCube(cellCenter + Vector3.up * 3f, new Vector3(cellSize, 0.1f, cellSize));
+            }
+
+            // Draw population indicator spheres
+            if (showCellPopulation && population > 0)
+            {
+                Gizmos.color = Color.yellow;
+                float radius = 0.1f + (population * 0.05f);
+                Gizmos.DrawSphere(cellCenter + Vector3.up * 3f, Mathf.Min(radius, 0.5f));
+            }
+        }
+    }
+
+    private void OnDrawGizmosSelected()
+    {
+        if (!Application.isPlaying) return;
+
+        // Draw a larger visualization when selected
+        Gizmos.color = new Color(1, 1, 1, 0.1f);
+        
+        // Draw a grid around the origin
+        int gridExtent = 20;
+        for (int x = -gridExtent; x <= gridExtent; x++)
+        {
+            for (int z = -gridExtent; z <= gridExtent; z++)
+            {
+                Vector3 cellCenter = new Vector3(
+                    x * cellSize + cellSize * 0.5f,
+                    0,
+                    z * cellSize + cellSize * 0.5f
+                );
+                Gizmos.DrawWireCube(cellCenter, new Vector3(cellSize, 0.05f, cellSize));
+            }
+        }
+    }
+}

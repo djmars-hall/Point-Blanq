@@ -27,8 +27,24 @@ public class NPCController : CharacterController
     private List<Vector3> pathCorners = new List<Vector3>();
     public List<Vector3> PathCorners => pathCorners;
 
+    // Spatial grid tracking
+    private Vector2Int currentCell;
+
+    [Header("Avoidance Settings")]
+    [SerializeField] private float avoidanceRadius = 4f;
+    [SerializeField] private float avoidanceWeight = 0.8f;
+    [SerializeField] private float minMoveSpeed = 0.3f;
+    [SerializeField] private float turnAmplification = 2f;
+
     private void Start()
     {
+        // Register with spatial grid
+        if (SpatialGrid.Instance != null)
+        {
+            currentCell = SpatialGrid.Instance.GetCellCoords(transform.position);
+            SpatialGrid.Instance.RegisterNPC(this, currentCell);
+        }
+
         NewWaypoint();
         waypoint_time = 5.0f;
     }
@@ -55,12 +71,10 @@ public class NPCController : CharacterController
 
             pathCorners = new List<Vector3>(pathReturned.corners);
 
-            // (Path visualization is now handled in OnDrawGizmosSelected)
-
             waypoint_time = Random.Range(3.0f, 12.0f);
             microState = NPCStatesMicro.Walking;
 
-            //not networking yet
+            //not networking yet...kinda being done on everyone's compuuuter :0
             //newWaypointRpc(current_waypoint, waypoint_time);
         }
     }
@@ -96,14 +110,51 @@ public class NPCController : CharacterController
         //Navmesh edges
         //Players
 
-        //Call to ProcessMovement with the decided values
-
         // Heuristic: pursue the next waypoint (corner)
         Vector3 toCorner = (pathCorners[0] - transform.position).normalized;
-        float forward = Vector3.Dot(transform.forward, toCorner);
-        float right = Vector3.Dot(transform.right, toCorner);
-        float moveAmount = Mathf.Clamp01(forward); // Only move forward
-        float rotationDir = Mathf.Clamp(right, -1f, 1f); // Turn toward the corner
+
+        // Get nearby NPCs from spatial grid and calculate avoidance
+        Vector3 avoidanceVector = Vector3.zero;
+        if (SpatialGrid.Instance != null)
+        {
+            List<NPCController> nearbyNPCs = SpatialGrid.Instance.GetNearbyNPCs(currentCell);
+
+            foreach (var otherNPC in nearbyNPCs)
+            {
+                if (otherNPC == null || otherNPC == this) continue;
+
+                float distance = Vector3.Distance(transform.position, otherNPC.transform.position);
+                
+                // Only avoid NPCs within the avoidance radius
+                if (distance < avoidanceRadius && distance > 0.1f)
+                {
+                    // Calculate direction away from the other NPC
+                    Vector3 awayFromNPC = (transform.position - otherNPC.transform.position).normalized;
+                    
+                    // Calculate influence (stronger when closer)
+                    // At distance 0: influence = 1.0
+                    // At avoidanceRadius: influence = 0.0
+                    float influence = 1f - (distance / avoidanceRadius);
+                    
+                    // Add weighted avoidance vector
+                    avoidanceVector += awayFromNPC * influence;
+                }
+            }
+        }
+
+        // Blend waypoint pursuit with avoidance
+        // Waypoint has higher priority, avoidance modifies the direction
+        Vector3 desiredDirection = (toCorner + avoidanceVector * avoidanceWeight).normalized;
+
+        // Calculate how to turn toward the desired direction
+        float forward = Vector3.Dot(transform.forward, desiredDirection);
+        float right = Vector3.Dot(transform.right, desiredDirection);
+        
+        // Always try to move forward, but slow down if not facing the right direction
+        float moveAmount = Mathf.Clamp01(forward * (1f - minMoveSpeed) + minMoveSpeed);
+        
+        // Turn toward the desired direction
+        float rotationDir = Mathf.Clamp(right * turnAmplification, -1f, 1f);
 
         ProcessMovement(moveAmount, rotationDir);
     }
@@ -111,6 +162,17 @@ public class NPCController : CharacterController
     void FixedUpdate()
     {
         if (!IsOwner) { return; }
+
+        // Update spatial grid cell if changed
+        if (SpatialGrid.Instance != null)
+        {
+            Vector2Int newCell = SpatialGrid.Instance.GetCellCoords(transform.position);
+            if (newCell != currentCell)
+            {
+                SpatialGrid.Instance.UpdateNPC(this, currentCell, newCell);
+                currentCell = newCell;
+            }
+        }
 
         //this shouldn't have to happen eventually. or maybe only once in a while?
         UpdatePositionClientRpc(transform.position, transform.rotation);
@@ -193,7 +255,6 @@ public class NPCController : CharacterController
         }
     }
 
-    
     [Rpc(SendTo.NotMe)]
     void newWaypointRpc(Vector3 cw, float wt)
     {
@@ -201,6 +262,15 @@ public class NPCController : CharacterController
         current_waypoint = cw;
         //navMeshAgent.SetDestination(current_waypoint);
         microState = NPCStatesMicro.Walking;
+    }
+
+    private void OnDestroy()
+    {
+        // Unregister from spatial grid
+        if (SpatialGrid.Instance != null)
+        {
+            SpatialGrid.Instance.UnregisterNPC(this, currentCell);
+        }
     }
 
 }

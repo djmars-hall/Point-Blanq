@@ -167,8 +167,7 @@ public class PlayerController : CharacterController
     [Rpc(SendTo.Owner)]
     public void ParentCameraRpc()
     {
-        if (!IsOwner) { Debug.LogError("BIG BAD!"); return; }
-        Debug.Log("should be parenting camera");
+        if (!IsOwner) { Debug.LogError("YOUR SUFFERING FROM A BIG BAD LACK OF CAMERA!"); return; }
         Camera.main.transform.SetParent(transform.GetChild(0));
         Camera.main.transform.localPosition = Vector3.zero;
         Camera.main.transform.localRotation = Quaternion.identity;

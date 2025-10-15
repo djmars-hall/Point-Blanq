@@ -4,7 +4,7 @@ using UnityEngine;
 public class GatheringArea : MonoBehaviour
 {
     public Vector3 size = new Vector3(5, 1, 5);
-    public Color gizmoColor = Color.red;
+    public Color gizmoColor = new Color(1f, 0f, 0f, 0.15f); // very transparent red
 
     public Vector3 GetRandomPointInArea()
     {

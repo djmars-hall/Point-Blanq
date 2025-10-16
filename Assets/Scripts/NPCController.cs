@@ -31,10 +31,12 @@ public class NPCController : CharacterController
     private Vector2Int currentCell;
 
     [Header("Avoidance Settings")]
-    [SerializeField] private float avoidanceRadius = 4f;
-    [SerializeField] private float avoidanceWeight = 0.8f;
+    [SerializeField] private float avoidanceRadius = 6f;
+    [SerializeField] private float NPCAvoidanceWeight = 0.8f;
+    [SerializeField] private float playerAvoidanceWeight = 1.0f;
     [SerializeField] private float minMoveSpeed = 0.3f;
-    [SerializeField] private float turnAmplification = 2f;
+    [SerializeField] private float avoidanceSlowdownFactor = 0.5f; // Speed multiplier when avoiding (0 = stop, 1 = full speed)
+    [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
 
     private void Start()
     {
@@ -103,16 +105,47 @@ public class NPCController : CharacterController
             }
         }
 
-        
-
         //logic for hueristic movement decisions to go towards the next corner, and avoid:
         //NPCs
         //Navmesh edges
         //Players
 
-        // Heuristic: pursue the next waypoint (corner)
-        Vector3 toCorner = (pathCorners[0] - transform.position).normalized;
+        // Next corner direction:
+        Vector3 cornerHeuristic = (pathCorners[0] - transform.position).normalized;
 
+        //NPC Avoidance:
+        Vector3 NPCHeuristic = GetNPCHeuristic();
+
+        //Player Avoidance:
+        Vector3 playerHeuristic = GetPlayerHeuristic();
+
+        // Blend Heuristics
+        Vector3 desiredDirection = (cornerHeuristic + NPCHeuristic * NPCAvoidanceWeight + playerHeuristic * playerAvoidanceWeight).normalized;
+
+
+
+        // Calculate avoidance intensity based on how much the NPC and player heuristics are influencing movement
+        float avoidanceIntensity = Mathf.Clamp01(NPCHeuristic.magnitude + playerHeuristic.magnitude);
+
+        // Move directly in the desired direction (no NavMesh edge detection)
+        float forward = Vector3.Dot(transform.forward, desiredDirection);
+        float right = Vector3.Dot(transform.right, desiredDirection);
+
+        // Calculate base move amount based on alignment with forward direction
+        float moveAmount = Mathf.Clamp01(forward * (1f - minMoveSpeed) + minMoveSpeed);
+
+        // Slow down when avoiding other NPCs
+        float speedModifier = Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
+        moveAmount *= speedModifier;
+
+        // Turn toward the desired direction
+        float rotationDir = Mathf.Clamp(right, -1f, 1f);
+
+        ProcessMovement(moveAmount, rotationDir);
+    }
+
+    private Vector3 GetNPCHeuristic()
+    {
         // Get nearby NPCs from spatial grid and calculate avoidance
         Vector3 avoidanceVector = Vector3.zero;
         if (SpatialGrid.Instance != null)
@@ -124,40 +157,31 @@ public class NPCController : CharacterController
                 if (otherNPC == null || otherNPC == this) continue;
 
                 float distance = Vector3.Distance(transform.position, otherNPC.transform.position);
-                
+
                 // Only avoid NPCs within the avoidance radius
                 if (distance < avoidanceRadius && distance > 0.1f)
                 {
                     // Calculate direction away from the other NPC
                     Vector3 awayFromNPC = (transform.position - otherNPC.transform.position).normalized;
-                    
-                    // Calculate influence (stronger when closer)
-                    // At distance 0: influence = 1.0
-                    // At avoidanceRadius: influence = 0.0
-                    float influence = 1f - (distance / avoidanceRadius);
-                    
+
+                    // Calculate influence using the custom curve
+                    // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
+                    float normalizedDistance = distance / avoidanceRadius;
+
+                    // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
+                    float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
+
                     // Add weighted avoidance vector
                     avoidanceVector += awayFromNPC * influence;
                 }
             }
+
+            return avoidanceVector;
         }
-
-        // Blend waypoint pursuit with avoidance
-        // Waypoint has higher priority, avoidance modifies the direction
-        Vector3 desiredDirection = (toCorner + avoidanceVector * avoidanceWeight).normalized;
-
-        // Calculate how to turn toward the desired direction
-        float forward = Vector3.Dot(transform.forward, desiredDirection);
-        float right = Vector3.Dot(transform.right, desiredDirection);
-        
-        // Always try to move forward, but slow down if not facing the right direction
-        float moveAmount = Mathf.Clamp01(forward * (1f - minMoveSpeed) + minMoveSpeed);
-        
-        // Turn toward the desired direction
-        float rotationDir = Mathf.Clamp(right * turnAmplification, -1f, 1f);
-
-        ProcessMovement(moveAmount, rotationDir);
+        UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
+        return avoidanceVector;
     }
+
 
     void FixedUpdate()
     {
@@ -263,6 +287,46 @@ public class NPCController : CharacterController
         //navMeshAgent.SetDestination(current_waypoint);
         microState = NPCStatesMicro.Walking;
     }
+
+    /// <summary>
+    /// Calculates an avoidance vector to steer away from nearby players. I should prolly just use the spatial grid for this too but eh
+    /// </summary>
+    /// <returns>A vector representing the direction and intensity to avoid players</returns>
+    private Vector3 GetPlayerHeuristic()
+    {
+        Vector3 avoidanceVector = Vector3.zero;
+        
+        // Find all PlayerController instances in the scene
+        PlayerController[] allPlayers = FindObjectsByType<PlayerController>(FindObjectsSortMode.None);
+
+        foreach (var player in allPlayers)
+        {
+            if (player == null || !player.gameObject.activeInHierarchy) continue;
+
+            float distance = Vector3.Distance(transform.position, player.transform.position);
+
+            // Only avoid players within the avoidance radius
+            if (distance < avoidanceRadius && distance > 0.1f)
+            {
+                // Calculate direction away from the player
+                Vector3 awayFromPlayer = (transform.position - player.transform.position).normalized;
+
+                // Calculate influence using the custom curve
+                // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
+                float normalizedDistance = distance / avoidanceRadius;
+
+                // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
+                float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
+
+                // Add weighted avoidance vector
+                avoidanceVector += awayFromPlayer * influence;
+            }
+        }
+
+        return avoidanceVector;
+    }
+
+
 
     private void OnDestroy()
     {

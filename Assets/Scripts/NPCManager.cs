@@ -56,8 +56,8 @@ public class NPCManager : NetworkBehaviour
         Material playerMaterial;
 
         //Randomly Determine a Spawnpoint
-        float randomX = Random.Range(-spawnRadius, spawnRadius);
-        float randomZ = Random.Range(-spawnRadius, spawnRadius);
+        float randomX = Random.Range(-spawnRadius, spawnRadius) + transform.position.x;
+        float randomZ = Random.Range(-spawnRadius, spawnRadius) + transform.position.z;
         Vector3 randomPos = new Vector3(randomX, -0.46f, randomZ);
 
         //Spawn NPC Object & Replace Material to match player

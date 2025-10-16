@@ -398,10 +398,43 @@ MonoBehaviour:
   meshes:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
-  avoidanceRadius: 4
-  avoidanceWeight: 1.1
+  avoidanceRadius: 6
+  avoidanceWeight: 0.8
   minMoveSpeed: 0.3
   turnAmplification: 2
+  avoidanceInfluenceCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.2638889
+    - serializedVersion: 3
+      time: 0.41719526
+      value: 0.19824445
+      inSlope: -1.2824208
+      outSlope: -1.2824208
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.08077974
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: -0.098271154
+      outSlope: -0.098271154
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.08641976
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!136 &1842469610956331879
 CapsuleCollider:
   m_ObjectHideFlags: 0

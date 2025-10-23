@@ -47,4 +47,10 @@ public class CharacterController : NetworkBehaviour
             renderer.material = BountyManager.Instance.playerMaterials[materialIndex];
         }
     }
+
+    [Rpc(SendTo.Everyone)]
+    public void DisableMeRpc()
+    {
+        gameObject.SetActive(false);
+    }
 }

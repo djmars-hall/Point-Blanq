@@ -27,18 +27,20 @@ public class NPCManager : NetworkBehaviour
 
     private void Awake()
     {
+        Instance = this;
+        if (!IsHost) return;
         gatheringAreas = new GatheringArea[gatheringAreaParent.childCount];
         for (int i = 0; i < gatheringAreaParent.childCount; i++)
         {
             gatheringAreas[i] = gatheringAreaParent.GetChild(i).GetComponent<GatheringArea>();
         }
-        Instance = this;
         npcList = new NPCController[maxNPCs];
     }
 
     public void Initialize()
     {
-        for(int i = 0; i < BountyManager.Instance.players.Count; i++)
+        if (!IsHost) return;
+        for (int i = 0; i < BountyManager.Instance.players.Count; i++)
         {
             //Material material = BountyManager.Instance.playerMaterials[i];
             for (int n = 0; n < maxDuplicatesPerPlayer; n++)
@@ -52,6 +54,7 @@ public class NPCManager : NetworkBehaviour
 
     public NPCController SpawnNPC(int materialIndex = 0)
     {
+        if (!IsHost) return null;
         NPCController newNPC = null;
         Material playerMaterial;
 
@@ -73,6 +76,13 @@ public class NPCManager : NetworkBehaviour
         newNPC.AssignSlotRpc(materialIndex);
 
         return newNPC;
+    }
+
+    // Function for cleaning up npcs and other resources at the end of battle
+    public void Cleanup()
+    {
+        npcList = null;
+        // Delete them all if we REALLY need to
     }
 
     //RPC Spawn NPC Function^^^^

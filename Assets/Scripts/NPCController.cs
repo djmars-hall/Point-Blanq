@@ -40,6 +40,8 @@ public class NPCController : CharacterController
 
     private void Start()
     {
+        if (!IsOwner) return;
+
         // Register with spatial grid
         if (SpatialGrid.Instance != null)
         {
@@ -207,7 +209,7 @@ public class NPCController : CharacterController
 
                 
 
-                waypoint_time -= Time.deltaTime;
+                waypoint_time -= Time.fixedDeltaTime;
                 if (waypoint_time <= 0.0f)
                 {
                     NewWaypoint();
@@ -278,7 +280,8 @@ public class NPCController : CharacterController
             }
         }
     }
-
+    
+    /*
     [Rpc(SendTo.NotMe)]
     void newWaypointRpc(Vector3 cw, float wt)
     {
@@ -287,6 +290,7 @@ public class NPCController : CharacterController
         //navMeshAgent.SetDestination(current_waypoint);
         microState = NPCStatesMicro.Walking;
     }
+    */
 
     /// <summary>
     /// Calculates an avoidance vector to steer away from nearby players. I should prolly just use the spatial grid for this too but eh
@@ -327,8 +331,8 @@ public class NPCController : CharacterController
     }
 
 
-
-    private void OnDestroy()
+    // TODO -> Run this upon npc death or removal
+    private void UnregisterFromGrid()
     {
         // Unregister from spatial grid
         if (SpatialGrid.Instance != null)

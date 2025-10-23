@@ -40,7 +40,8 @@ public class GameManager : NetworkBehaviour
             }
             else
             {
-                players[i].gameObject.SetActive(false);
+                //players[i].gameObject.SetActive(false);
+                players[i].DisableMeRpc();
             }
         }
         //Initialize Spawner
@@ -61,7 +62,7 @@ public class GameManager : NetworkBehaviour
             int roll = Random.Range(0, ncount - 1);
             if (roll == i) roll += 1;
             if (roll >= ncount) roll = 0;
-            Debug.Log("i : "+i+"roll : "+roll+" ncount : "+ncount);
+            Debug.Log(" i : "+i+" roll : "+roll+" ncount : "+ncount);
             UpdatePlayerTargetRpc(
                 NetworkManager.Singleton.ConnectedClientsList[i].ClientId, 
                 NetworkManager.Singleton.ConnectedClientsList[roll].ClientId
@@ -94,11 +95,8 @@ public class GameManager : NetworkBehaviour
     private void EndGameRpc()
     {
         Debug.Log("Game has ended!");
-        // Re-enable when we have worked out the problem with
-        // the NPCs remaining on load
-        /*
         if (!IsHost) return;
+        NPCManager.Instance.Cleanup();
         NetworkManager.Singleton.SceneManager.LoadScene("ResultScene", LoadSceneMode.Single);
-        */
     }
 }

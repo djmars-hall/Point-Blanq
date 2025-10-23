@@ -73,6 +73,8 @@ public class PlayerController : CharacterController
 
     void FixedUpdate()
     {
+        rigidbody.linearVelocity = Vector3.zero;
+        rigidbody.angularVelocity = Vector3.zero;
         if (!IsOwner) { return; }
         //Movement
         float h = moveDir.x;
@@ -90,14 +92,14 @@ public class PlayerController : CharacterController
             rigidbody.MovePosition(newPos);
             //transform.position = newPos;
             transform.Rotate(new Vector3(0, rot, 0));
-            UpdatePositionClientRpc(rigidbody.position, transform.rotation);
         }
+        UpdatePositionClientRpc(rigidbody.position, transform.rotation);
     }
 
 
     private void LateUpdate()
     {
-        Debug.LogWarning("Should this only happen for the owner?");
+        if (!IsOwner) return;
 
         //Movement
         moveDir = move.action.ReadValue<Vector2>();

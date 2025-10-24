@@ -9,16 +9,30 @@ using UnityEngine.SceneManagement;
 
 public class GameManager : NetworkBehaviour
 {
+    public static GameManager Instance;
 
     private bool gameStarted = false;
     [SerializeField] private float timeLeftInMatch;
 
     [SerializeField] private List<PlayerController> players;
 
+    public bool ignoreNetwork = false;
+
+    private void Awake()
+    {
+        Instance = this;
+
+        if (ignoreNetwork) GetComponent<NetworkObject>().enabled = false;
+    }
+
     private void Start()
     {
-        NetworkState.inst.NotifyHostReadyRpc(NetworkManager.Singleton.LocalClientId);
-        if (IsHost) SetupGameForAllPlayers();
+        if (!ignoreNetwork)
+        {
+            NetworkState.inst.NotifyHostReadyRpc(NetworkManager.Singleton.LocalClientId);
+            if (IsHost) SetupGameForAllPlayers();
+        }
+        else StartGameSolo();
     }
     private async void SetupGameForAllPlayers()
     {
@@ -48,6 +62,13 @@ public class GameManager : NetworkBehaviour
         NPCManager.Instance.Initialize();
         // Start Game
         StartGameRpc();
+    }
+
+    private void StartGameSolo()
+    {
+        players[0].ParentCamera();
+        players[1].gameObject.SetActive(false);
+        players[2].gameObject.SetActive(false);
     }
 
     [Rpc(SendTo.Everyone)]

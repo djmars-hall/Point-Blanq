@@ -20,7 +20,7 @@ public class SpatialGrid : MonoBehaviour
     [SerializeField] private int lowPopThreshold = 3;
     [SerializeField] private int mediumPopThreshold = 7;
 
-    private Dictionary<Vector2Int, List<CharacterController>> grid = new Dictionary<Vector2Int, List<CharacterController>>();
+    private Dictionary<Vector2Int, List<BaseCharController>> grid = new Dictionary<Vector2Int, List<BaseCharController>>();
     private HashSet<Vector2Int> occupiedCells = new HashSet<Vector2Int>();
     
     // Stats tracking
@@ -72,13 +72,13 @@ public class SpatialGrid : MonoBehaviour
     /// <summary>
     /// Registers a Character in the grid at the specified cell.
     /// </summary>
-    public void RegisterCharacter(CharacterController character, Vector2Int cellCoords)
+    public void RegisterCharacter(BaseCharController character, Vector2Int cellCoords)
     {
         if (character == null) return;
 
         if (!grid.ContainsKey(cellCoords))
         {
-            grid[cellCoords] = new List<CharacterController>();
+            grid[cellCoords] = new List<BaseCharController>();
         }
 
         if (!grid[cellCoords].Contains(character))
@@ -92,7 +92,7 @@ public class SpatialGrid : MonoBehaviour
     /// <summary>
     /// Updates a Character's cell membership when it moves between cells.
     /// </summary>
-    public void UpdateCharacter(CharacterController character, Vector2Int oldCell, Vector2Int newCell)
+    public void UpdateCharacter(BaseCharController character, Vector2Int oldCell, Vector2Int newCell)
     {
         if (character == null || oldCell == newCell) return;
 
@@ -117,7 +117,7 @@ public class SpatialGrid : MonoBehaviour
     /// <summary>
     /// Unregisters a Character from the grid.
     /// </summary>
-    public void UnregisterCharacter(CharacterController character, Vector2Int cellCoords)
+    public void UnregisterCharacter(BaseCharController character, Vector2Int cellCoords)
     {
         if (character == null) return;
 
@@ -138,9 +138,9 @@ public class SpatialGrid : MonoBehaviour
     /// <summary>
     /// Gets all Characters in the current cell and 8 adjacent cells (3x3 grid).
     /// </summary>
-    public List<CharacterController> GetNearbyCharacters(Vector2Int cellCoords)
+    public List<BaseCharController> GetNearbyCharacters(Vector2Int cellCoords)
     {
-        List<CharacterController> nearby = new List<CharacterController>();
+        List<BaseCharController> nearby = new List<BaseCharController>();
 
         // Check 3x3 grid
         for (int x = -1; x <= 1; x++)

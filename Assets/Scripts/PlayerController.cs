@@ -4,7 +4,7 @@ using Unity.Netcode;
 using Unity.VisualScripting;
 using Unity.Services.Matchmaker.Models;
 
-public class PlayerController : CharacterController
+public class PlayerController : BaseCharController
 {
     public InputActionAsset inputActions;
 
@@ -57,10 +57,6 @@ public class PlayerController : CharacterController
         }
         */
 
-        
-
-
-
 
         //Aiming
         if (aimValue > aimThreshold)
@@ -87,7 +83,7 @@ public class PlayerController : CharacterController
     {
         rigidbody.linearVelocity = Vector3.zero;
         rigidbody.angularVelocity = Vector3.zero;
-        if (!IsOwner) { return; }
+        if (!GameManager.Instance.ignoreNetwork && !IsOwner) { return; }
 
         // Update spatial grid cell if changed
         if (SpatialGrid.Instance != null)
@@ -117,13 +113,13 @@ public class PlayerController : CharacterController
             //transform.position = newPos;
             transform.Rotate(new Vector3(0, rot, 0));
         }
-        UpdatePositionClientRpc(rigidbody.position, transform.rotation);
+        if (!GameManager.Instance.ignoreNetwork) UpdatePositionClientRpc(rigidbody.position, transform.rotation);
     }
 
 
     private void LateUpdate()
     {
-        if (!IsOwner) return;
+        if (!GameManager.Instance.ignoreNetwork && !IsOwner) return;
 
         //Movement
         moveDir = move.action.ReadValue<Vector2>();
@@ -154,16 +150,16 @@ public class PlayerController : CharacterController
         if (Physics.Raycast(muzzle.position, muzzle.forward, out hit, 10))
         {
             Debug.Log(hit.transform.gameObject.name);
-            CharacterController hit_cc = hit.transform.GetComponent<CharacterController>();
+            BaseCharController hit_cc = hit.transform.GetComponent<BaseCharController>();
             bool back_hit = false;
             bool npc_hit = false;
             if (hit_cc == null && hit.transform.tag == "back_target")
             {
-                hit_cc = hit.transform.parent.GetComponent<CharacterController>();
+                hit_cc = hit.transform.parent.GetComponent<BaseCharController>();
                 back_hit = true;
                 Debug.Log("Back hit!");
             }
-            if (hit_cc is CharacterController)
+            if (hit_cc is BaseCharController)
             {
                 ulong hit_player_id = hit_cc.OwnerClientId;
                 if (hit_cc is NPCController)
@@ -198,6 +194,15 @@ public class PlayerController : CharacterController
         Camera.main.transform.localPosition = Vector3.zero;
         Camera.main.transform.localRotation = Quaternion.identity;
     }
+
+    public void ParentCamera()
+    {
+        Camera.main.transform.SetParent(transform.GetChild(0));
+        Camera.main.transform.localPosition = Vector3.zero;
+        Camera.main.transform.localRotation = Quaternion.identity;
+    }
+
+
 
     [Rpc(SendTo.Everyone)]
     public void PullOutGunRpc()

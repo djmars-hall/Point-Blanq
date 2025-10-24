@@ -6,7 +6,7 @@ using NUnit.Framework;
 using System.Collections.Generic;
 using System.Linq;
 
-public class NPCController : CharacterController
+public class NPCController : BaseCharController
 {
 
     enum NPCStatesMicro
@@ -39,30 +39,20 @@ public class NPCController : CharacterController
     [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
     [SerializeField] private int maxTrackedCharacters = 3;
 
-    /// <summary>
-    /// Represents a single character's influence on this NPC's movement
-    /// </summary>
-    public struct CharacterInfluence
-    {
-        public CharacterController character;
-        public Vector3 avoidanceVector;
-        public float distance;
-        public float influence;
-    }
-
     //Heuristics
-    private List<CharacterInfluence> characterHeuristics = new List<CharacterInfluence>();
+    private List<Vector3> characterHeuristics = new List<Vector3>();
     private Vector3 cornerHeuristic;
+    private Vector3 desiredDirection;
 
     //Public getters for heuristics for gizmo drawing
-    public List<CharacterInfluence> CharacterHeuristics => characterHeuristics;
+    public List<Vector3> CharacterHeuristics => characterHeuristics;
     public Vector3 CornerHeuristic => cornerHeuristic;
+    public Vector3 DesiredDirection => desiredDirection;
 
     private void Start()
     {
 
         if (!IsOwner) return;
-
 
         // Register with spatial grid
         if (SpatialGrid.Instance != null)
@@ -82,9 +72,6 @@ public class NPCController : CharacterController
 
         var areas = NPCManager.Instance.gatheringAreas;
         if (areas == null || areas.Length == 0) return;
-
-        
-
 
         // Pick a random GatheringArea
         GatheringArea area = areas[Random.Range(0, areas.Length)];
@@ -136,59 +123,92 @@ public class NPCController : CharacterController
             }
         }
 
-        //logic for hueristic movement decisions to go towards the next corner, and avoid:
-        //NPCs
-        //Navmesh edges
-        //Players
-
-        // Next corner direction:
-        cornerHeuristic = (pathCorners[0] - transform.position).normalized;
-
-        //Character Avoidance (NPCs and Players):
+        //Corner Heuristic:
+        cornerHeuristic = GetCornerHeuristic();
+            
+        //Character Heuristic (NPCs and Players):
         characterHeuristics = GetCharacterHeuristics();
 
-        // Calculate combined avoidance vector from top influences
-        Vector3 combinedCharacterHeuristic = Vector3.zero;
-        foreach (var influence in characterHeuristics)
+
+        // Calculate desired direction by blending corner heuristic with weighted character heuristics
+        desiredDirection = cornerHeuristic;
+        foreach (var characterHeuristic in characterHeuristics)
         {
-            combinedCharacterHeuristic += influence.avoidanceVector;
+            desiredDirection += characterHeuristic * characterAvoidanceWeight;
         }
+        desiredDirection = desiredDirection.normalized;
 
-        // Blend Heuristics
-        Vector3 desiredDirection = (cornerHeuristic + combinedCharacterHeuristic * characterAvoidanceWeight).normalized;
+        // Calculate how aligned the NPC's forward direction is with the desired direction
+        float forwardAlignment = Vector3.Dot(transform.forward, desiredDirection);
+        
+        // Calculate the rotation needed (using the right vector to determine turn direction)
+        float rightAlignment = Vector3.Dot(transform.right, desiredDirection);
 
-        // Calculate avoidance intensity based on how much the character heuristics are influencing movement
-        float avoidanceIntensity = Mathf.Clamp01(combinedCharacterHeuristic.magnitude);
+        // Rotation: Turn toward the desired direction
+        // Scale rotation by how far we need to turn (larger misalignment = faster turn)
+        float rotationDir = Mathf.Clamp(rightAlignment, -1f, 1f);
 
-        // Move directly in the desired direction (no NavMesh edge detection)
-        float forward = Vector3.Dot(transform.forward, desiredDirection);
-        float right = Vector3.Dot(transform.right, desiredDirection);
+        // Speed: Move faster when aligned with desired direction, slower when turning
+        // This creates more natural movement where NPCs slow down to turn
+        float speedMultiplier = Mathf.Clamp01(forwardAlignment);
+        
+        // Apply minimum speed so NPC doesn't stop completely when turning
+        speedMultiplier = Mathf.Max(speedMultiplier, minMoveSpeed);
 
-        // Calculate base move amount based on alignment with forward direction
-        float moveAmount = Mathf.Clamp01(forward * (1f - minMoveSpeed) + minMoveSpeed);
+        // Apply slowdown when avoiding characters (based on total character heuristic magnitude)
+        float totalCharacterInfluence = 0f;
+        foreach (var characterHeuristic in characterHeuristics)
+        {
+            totalCharacterInfluence += characterHeuristic.magnitude;
+        }
+        float avoidanceIntensity = Mathf.Clamp01(totalCharacterInfluence);
+        speedMultiplier *= Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
 
-        // Slow down when avoiding other characters
-        float speedModifier = Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
-        moveAmount *= speedModifier;
-
-        // Turn toward the desired direction
-        float rotationDir = Mathf.Clamp(right, -1f, 1f);
-
-        ProcessMovement(moveAmount, rotationDir);
+        // Execute movement with the calculated speed and rotation
+        ProcessMovement(speedMultiplier, rotationDir);
     }
 
+
     /// <summary>
-    /// Calculates individual avoidance influences from nearby characters (both NPCs and Players).
-    /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential characters.
+    /// Calculates the corner heuristic vector pointing toward the next path corner.
     /// </summary>
-    /// <returns>A list of the most influential character avoidances, limited to maxTrackedCharacters</returns>
-    private List<CharacterInfluence> GetCharacterHeuristics()
+    /// <returns></returns>
+    private Vector3 GetCornerHeuristic()
     {
-        List<CharacterInfluence> allInfluences = new List<CharacterInfluence>();
+        // Calculate distance to next corner
+        float distanceToCorner = Vector3.Distance(pathCorners[0], transform.position);
+
+        // Next corner direction with distance-based strength reduction
+        Vector3 baseCornerDirection = (pathCorners[0] - transform.position);
+        baseCornerDirection.y = 0; // Keep movement on horizontal plane
+        baseCornerDirection = baseCornerDirection.normalized;
+
+        // Reduce corner strength when close to destination (within 3 units)
+        float cornerStrengthMultiplier = 1f;
+        float arrivalSlowdownDistance = 3f;
+        if (distanceToCorner < arrivalSlowdownDistance)
+        {
+            // Smoothly reduce from 1.0 to 0.7 as we get closer (much less aggressive)
+            cornerStrengthMultiplier = Mathf.Lerp(0.7f, 1f, distanceToCorner / arrivalSlowdownDistance);
+        }
+
+        return baseCornerDirection * cornerStrengthMultiplier;
+    }
+
+
+    /// <summary>
+    /// Calculates individual avoidance vectors from nearby characters (both NPCs and Players).
+    /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential character avoidance vectors.
+    /// </summary>
+    /// <returns>A list of the most influential character avoidance vectors, limited to maxTrackedCharacters</returns>
+    private List<Vector3> GetCharacterHeuristics()
+    {
+        // Use dictionaries to track influences for sorting
+        Dictionary<Vector3, float> influenceMap = new Dictionary<Vector3, float>();
         
         if (SpatialGrid.Instance != null)
         {
-            List<CharacterController> nearbyCharacters = SpatialGrid.Instance.GetNearbyCharacters(currentCell);
+            List<BaseCharController> nearbyCharacters = SpatialGrid.Instance.GetNearbyCharacters(currentCell);
 
             foreach (var otherCharacter in nearbyCharacters)
             {
@@ -200,7 +220,9 @@ public class NPCController : CharacterController
                 if (distance < avoidanceRadius && distance > 0.1f)
                 {
                     // Calculate direction away from the other character
-                    Vector3 awayFromCharacter = (transform.position - otherCharacter.transform.position).normalized;
+                    Vector3 awayFromCharacter = (transform.position - otherCharacter.transform.position);
+                    awayFromCharacter.y = 0; // Keep avoidance on horizontal plane
+                    awayFromCharacter = awayFromCharacter.normalized;
 
                     // Calculate influence using the custom curve
                     // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
@@ -209,28 +231,22 @@ public class NPCController : CharacterController
                     // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
                     float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
 
-                    // Create the influence data
-                    CharacterInfluence charInfluence = new CharacterInfluence
-                    {
-                        character = otherCharacter,
-                        avoidanceVector = awayFromCharacter * influence,
-                        distance = distance,
-                        influence = influence
-                    };
-
-                    allInfluences.Add(charInfluence);
+                    // Store the avoidance vector with its influence
+                    Vector3 avoidanceVector = awayFromCharacter * influence;
+                    influenceMap[avoidanceVector] = influence;
                 }
             }
 
-            // Sort by influence (highest first) and take the top N
-            return allInfluences
-                .OrderByDescending(inf => inf.influence)
+            // Sort by influence (highest first), take the top N, and extract just the vectors
+            return influenceMap
+                .OrderByDescending(pair => pair.Value)
                 .Take(maxTrackedCharacters)
+                .Select(pair => pair.Key)
                 .ToList();
         }
         
         UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
-        return allInfluences;
+        return new List<Vector3>();
     }
 
 
@@ -295,7 +311,7 @@ public class NPCController : CharacterController
             //case NPCStatesMicro.Turning:
             //    Vector3 directionToTarget = (current_waypoint - transform.position).normalized;
             //    Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
-            //    float midpoint_to_target_angle = Mathf.LerpAngle(transform.rotation.eulerAngles.y, targetRotation.eulerAngles.y, 0.5f);
+            //    float midpoint_to_target_angle = Mathf.Lerpangle(transform.rotation.eulerAngles.y, targetRotation.eulerAngles.y, 0.5f);
             //    float midpoint_to_target_angle_diff = midpoint_to_target_angle - transform.rotation.eulerAngles.y;
             //    float rot_dir = Mathf.Sign(midpoint_to_target_angle_diff);
             //    ProcessMovement(0, rot_dir);

@@ -7,6 +7,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     [SerializeField] private bool showONLYWhenSelected = true;
 
     [Header("Path Gizmo Settings")]
+    [SerializeField] private bool showPaths = true;
     [SerializeField] private Color gizmoColor = Color.magenta;
     [SerializeField] private float gizmoRadius = 0.4f;
     private List<Vector3> pathCorners;
@@ -16,7 +17,11 @@ public class NPCGizmoGenerator : MonoBehaviour
     [Header("Heuristic Gizmo Settings")]
     [SerializeField] private bool showHeuristics = true;
     [SerializeField] private Color cornerHeuristicColor = Color.green;
+    [SerializeField] private Color desiredDirectionColor = Color.cyan;
     [SerializeField] private float heuristicLineScale = 2f;
+    [SerializeField] private float desiredDirectionScale = 3f;
+    [SerializeField] private float desiredDirectionThickness = 0.15f;
+    [SerializeField] private float smallArrowSize = 0.15f;
     
     [Header("Character Heuristic Colors")]
     [SerializeField] private Color closestCharacterColor = Color.red;
@@ -39,6 +44,7 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     private void DrawPathGizmos()
     {
+        if (!showPaths) return;
         if (GetComponent<NPCController>() == null) return;
 
         pathCorners = GetComponent<NPCController>().PathCorners;
@@ -77,17 +83,16 @@ public class NPCGizmoGenerator : MonoBehaviour
             Gizmos.color = cornerHeuristicColor;
             Vector3 endPoint = npcPosition + cornerHeuristic * heuristicLineScale;
             Gizmos.DrawLine(npcPosition, endPoint);
-            // Draw a small sphere at the end to indicate direction
-            Gizmos.DrawSphere(endPoint, 0.1f);
+            DrawArrowHead(endPoint, cornerHeuristic, smallArrowSize);
         }
 
         // Draw Individual Character Heuristics
-        List<NPCController.CharacterInfluence> characterHeuristics = npcController.CharacterHeuristics;
+        List<Vector3> characterHeuristics = npcController.CharacterHeuristics;
         if (characterHeuristics != null && characterHeuristics.Count > 0)
         {
             for (int i = 0; i < characterHeuristics.Count; i++)
             {
-                var influence = characterHeuristics[i];
+                Vector3 characterHeuristic = characterHeuristics[i];
                 
                 // Assign color based on priority (closest = red, second = orange, third = yellow)
                 Color heuristicColor = i switch
@@ -101,23 +106,43 @@ public class NPCGizmoGenerator : MonoBehaviour
                 Gizmos.color = heuristicColor;
 
                 // Draw the avoidance vector
-                if (influence.avoidanceVector.magnitude > 0.01f)
+                if (characterHeuristic.magnitude > 0.01f)
                 {
-                    Vector3 endPoint = npcPosition + influence.avoidanceVector * heuristicLineScale;
+                    Vector3 endPoint = npcPosition + characterHeuristic * heuristicLineScale;
                     Gizmos.DrawLine(npcPosition, endPoint);
-                    
-                    // Draw a sphere at the end to indicate direction and priority
-                    float sphereSize = 0.15f - (i * 0.03f); // Larger for higher priority
-                    Gizmos.DrawSphere(endPoint, sphereSize);
-
-                    // Draw a line to the character being avoided (for debugging)
-                    if (influence.character != null)
-                    {
-                        Gizmos.color = new Color(heuristicColor.r, heuristicColor.g, heuristicColor.b, 0.3f);
-                        Gizmos.DrawLine(npcPosition, influence.character.transform.position + offset);
-                    }
+                    DrawArrowHead(endPoint, characterHeuristic, smallArrowSize);
                 }
             }
         }
+
+        // Draw Desired Direction (final combined heuristic) - Most prominent
+        Vector3 desiredDirection = npcController.DesiredDirection;
+        if (desiredDirection.magnitude > 0.01f)
+        {
+            Gizmos.color = desiredDirectionColor;
+            Vector3 endPoint = npcPosition + desiredDirection * desiredDirectionScale;
+
+            Gizmos.DrawLine(npcPosition, endPoint);
+            DrawArrowHead(endPoint, desiredDirection, 0.3f); // Large arrowhead for desired direction
+        }
+    }
+
+    /// <summary>
+    /// Draws an arrow head at the end of a line
+    /// </summary>
+    private void DrawArrowHead(Vector3 tip, Vector3 direction, float size)
+    {
+        Vector3 normalizedDir = direction.normalized;
+        
+        // Calculate arrow head base point
+        Vector3 basePoint = tip - normalizedDir * size;
+        
+        // Calculate perpendicular vectors for arrow wings
+        Vector3 perpendicular = Vector3.Cross(normalizedDir, Vector3.up).normalized * (size * 0.5f);
+        
+        // Draw arrow wings
+        Gizmos.DrawLine(tip, basePoint + perpendicular);
+        Gizmos.DrawLine(tip, basePoint - perpendicular);
+        Gizmos.DrawLine(basePoint + perpendicular, basePoint - perpendicular);
     }
 }

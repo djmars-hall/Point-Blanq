@@ -2,7 +2,7 @@ using UnityEngine;
 using Unity.Netcode;
 using System;
 
-public class CharacterController : NetworkBehaviour
+public class BaseCharController : NetworkBehaviour
 {
     [SerializeField] internal float speed = 3.5f;
     [SerializeField] internal float rotationSpeed = 60f;

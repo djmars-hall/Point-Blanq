@@ -3949,7 +3949,7 @@ MonoBehaviour:
   - {fileID: 1800148494}
   - {fileID: 659246451}
   - {fileID: 397552744}
-  ignoreNetwork: 1
+  ignoreNetwork: 0
 --- !u!4 &828745407
 Transform:
   m_ObjectHideFlags: 0

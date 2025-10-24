@@ -16,6 +16,24 @@
                     "initialStateCheck": true
                 },
                 {
+                    "name": "Zoom",
+                    "type": "Value",
+                    "id": "ac02f998-6361-4260-aaf2-54f264cf8774",
+                    "expectedControlType": "Vector2",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
+                    "name": "Look",
+                    "type": "Value",
+                    "id": "9e4d4896-a1ac-47ae-81d3-67df68b12863",
+                    "expectedControlType": "Vector2",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
                     "name": "Aim",
                     "type": "Value",
                     "id": "66c990ae-bbfb-4d3d-8ee1-dc899b196221",
@@ -199,6 +217,50 @@
                     "action": "Move",
                     "isComposite": false,
                     "isPartOfComposite": true
+                },
+                {
+                    "name": "",
+                    "id": "422d70ea-ff5c-4294-9e08-5faf4d804e20",
+                    "path": "<Mouse>/scroll",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "Zoom",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "5eeecd2e-933e-460b-9b1a-2201c2bbb0ba",
+                    "path": "<XInputController>/dpad",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Gamepad",
+                    "action": "Zoom",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "fe30d6ef-d083-4cd3-bd89-bf7565072a96",
+                    "path": "<Gamepad>/rightStick",
+                    "interactions": "",
+                    "processors": "ScaleVector2(x=100,y=100)",
+                    "groups": ";Gamepad",
+                    "action": "Look",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "7480516e-60d9-4f8e-bc6a-ba0635829098",
+                    "path": "<Pointer>/delta",
+                    "interactions": "",
+                    "processors": "DeltaTimeScale,ScaleVector2(x=0.1,y=0.1)",
+                    "groups": ";Keyboard&Mouse",
+                    "action": "Look",
+                    "isComposite": false,
+                    "isPartOfComposite": false
                 },
                 {
                     "name": "",

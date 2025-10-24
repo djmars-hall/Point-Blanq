@@ -84,8 +84,8 @@ public class PlayerController : CharacterController
     }
     protected void ProcessMovement(float forward_movement, float rotation_dir, bool use_rigidbody = true)
     {
-        float rot = rotation_dir * Time.deltaTime * speed * rotationSpeed;
-        Vector3 move = new Vector3(0, 0, forward_movement * Time.deltaTime * speed);
+        float rot = rotation_dir * Time.fixedDeltaTime * speed * rotationSpeed;
+        Vector3 move = new Vector3(0, 0, forward_movement * Time.fixedDeltaTime * speed);
         if (move != Vector3.zero || rot != 0)
         {
             Vector3 newPos = transform.position + move.z * transform.forward;

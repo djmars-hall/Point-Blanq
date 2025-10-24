@@ -23,9 +23,21 @@ public class PlayerController : CharacterController
 
     private Rigidbody rigidbody;
 
+    // Spatial grid tracking
+    private Vector2Int currentCell;
+
     private void Start()
     {
         rigidbody = GetComponent<Rigidbody>();
+
+        if (!IsOwner) return;
+
+        // Register with spatial grid
+        if (SpatialGrid.Instance != null)
+        {
+            currentCell = SpatialGrid.Instance.GetCellCoords(transform.position);
+            SpatialGrid.Instance.RegisterCharacter(this, currentCell);
+        }
     }
 
     void Update()
@@ -76,6 +88,18 @@ public class PlayerController : CharacterController
         rigidbody.linearVelocity = Vector3.zero;
         rigidbody.angularVelocity = Vector3.zero;
         if (!IsOwner) { return; }
+
+        // Update spatial grid cell if changed
+        if (SpatialGrid.Instance != null)
+        {
+            Vector2Int newCell = SpatialGrid.Instance.GetCellCoords(transform.position);
+            if (newCell != currentCell)
+            {
+                SpatialGrid.Instance.UpdateCharacter(this, currentCell, newCell);
+                currentCell = newCell;
+            }
+        }
+
         //Movement
         float h = moveDir.x;
         float v = moveDir.y;
@@ -190,6 +214,15 @@ public class PlayerController : CharacterController
     public void ShootRpc()
     {
         Debug.Log("BANG");
+    }
+
+    // Unregister from grid when destroyed or disabled
+    private void OnDestroy()
+    {
+        if (IsOwner && SpatialGrid.Instance != null)
+        {
+            SpatialGrid.Instance.UnregisterCharacter(this, currentCell);
+        }
     }
 
 }

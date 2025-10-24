@@ -4,6 +4,7 @@ using Unity.Netcode;
 using UnityEngine.AI;
 using NUnit.Framework;
 using System.Collections.Generic;
+using System.Linq;
 
 public class NPCController : CharacterController
 {
@@ -21,7 +22,7 @@ public class NPCController : CharacterController
     }
 
     NPCStatesMacro macroState = NPCStatesMacro.WaypointWandering;
-    NPCStatesMicro microState = NPCStatesMicro.Turning;
+    NPCStatesMicro microState = NPCStatesMicro.Walking;
     Vector3 current_waypoint;
     float waypoint_time;
     private List<Vector3> pathCorners = new List<Vector3>();
@@ -32,37 +33,65 @@ public class NPCController : CharacterController
 
     [Header("Avoidance Settings")]
     [SerializeField] private float avoidanceRadius = 6f;
-    [SerializeField] private float NPCAvoidanceWeight = 0.8f;
-    [SerializeField] private float playerAvoidanceWeight = 1.0f;
+    [SerializeField] private float characterAvoidanceWeight = 0.8f;
     [SerializeField] private float minMoveSpeed = 0.3f;
     [SerializeField] private float avoidanceSlowdownFactor = 0.5f; // Speed multiplier when avoiding (0 = stop, 1 = full speed)
     [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
+    [SerializeField] private int maxTrackedCharacters = 3;
+
+    /// <summary>
+    /// Represents a single character's influence on this NPC's movement
+    /// </summary>
+    public struct CharacterInfluence
+    {
+        public CharacterController character;
+        public Vector3 avoidanceVector;
+        public float distance;
+        public float influence;
+    }
+
+    //Heuristics
+    private List<CharacterInfluence> characterHeuristics = new List<CharacterInfluence>();
+    private Vector3 cornerHeuristic;
+
+    //Public getters for heuristics for gizmo drawing
+    public List<CharacterInfluence> CharacterHeuristics => characterHeuristics;
+    public Vector3 CornerHeuristic => cornerHeuristic;
 
     private void Start()
     {
+
         if (!IsOwner) return;
+
 
         // Register with spatial grid
         if (SpatialGrid.Instance != null)
         {
             currentCell = SpatialGrid.Instance.GetCellCoords(transform.position);
-            SpatialGrid.Instance.RegisterNPC(this, currentCell);
+            SpatialGrid.Instance.RegisterCharacter(this, currentCell);
         }
+
 
         NewWaypoint();
         waypoint_time = 5.0f;
+
     }
 
     private void NewWaypoint()
     {
+
         var areas = NPCManager.Instance.gatheringAreas;
         if (areas == null || areas.Length == 0) return;
+
+        
+
 
         // Pick a random GatheringArea
         GatheringArea area = areas[Random.Range(0, areas.Length)];
 
         // Use a random point within the area as the waypoint
         Vector3 targetPoint = area.GetRandomPointInArea();
+
 
         NavMeshHit hit;
         if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
@@ -71,21 +100,21 @@ public class NPCController : CharacterController
             //navMeshAgent.SetDestination(current_waypoint);
             NavMeshPath pathReturned = new NavMeshPath();
 
+
             NavMesh.CalculatePath(transform.position, current_waypoint, NavMesh.AllAreas, pathReturned);
 
             pathCorners = new List<Vector3>(pathReturned.corners);
 
             waypoint_time = Random.Range(3.0f, 12.0f);
             microState = NPCStatesMicro.Walking;
-
-            //not networking yet...kinda being done on everyone's compuuuter :0
-            //newWaypointRpc(current_waypoint, waypoint_time);
         }
+
     }
 
 
     private void DecideMovement()
     {
+
         //check if at end of pathway
         if (pathCorners.Count == 0)
         {
@@ -113,21 +142,23 @@ public class NPCController : CharacterController
         //Players
 
         // Next corner direction:
-        Vector3 cornerHeuristic = (pathCorners[0] - transform.position).normalized;
+        cornerHeuristic = (pathCorners[0] - transform.position).normalized;
 
-        //NPC Avoidance:
-        Vector3 NPCHeuristic = GetNPCHeuristic();
+        //Character Avoidance (NPCs and Players):
+        characterHeuristics = GetCharacterHeuristics();
 
-        //Player Avoidance:
-        Vector3 playerHeuristic = GetPlayerHeuristic();
+        // Calculate combined avoidance vector from top influences
+        Vector3 combinedCharacterHeuristic = Vector3.zero;
+        foreach (var influence in characterHeuristics)
+        {
+            combinedCharacterHeuristic += influence.avoidanceVector;
+        }
 
         // Blend Heuristics
-        Vector3 desiredDirection = (cornerHeuristic + NPCHeuristic * NPCAvoidanceWeight + playerHeuristic * playerAvoidanceWeight).normalized;
+        Vector3 desiredDirection = (cornerHeuristic + combinedCharacterHeuristic * characterAvoidanceWeight).normalized;
 
-
-
-        // Calculate avoidance intensity based on how much the NPC and player heuristics are influencing movement
-        float avoidanceIntensity = Mathf.Clamp01(NPCHeuristic.magnitude + playerHeuristic.magnitude);
+        // Calculate avoidance intensity based on how much the character heuristics are influencing movement
+        float avoidanceIntensity = Mathf.Clamp01(combinedCharacterHeuristic.magnitude);
 
         // Move directly in the desired direction (no NavMesh edge detection)
         float forward = Vector3.Dot(transform.forward, desiredDirection);
@@ -136,7 +167,7 @@ public class NPCController : CharacterController
         // Calculate base move amount based on alignment with forward direction
         float moveAmount = Mathf.Clamp01(forward * (1f - minMoveSpeed) + minMoveSpeed);
 
-        // Slow down when avoiding other NPCs
+        // Slow down when avoiding other characters
         float speedModifier = Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
         moveAmount *= speedModifier;
 
@@ -146,25 +177,30 @@ public class NPCController : CharacterController
         ProcessMovement(moveAmount, rotationDir);
     }
 
-    private Vector3 GetNPCHeuristic()
+    /// <summary>
+    /// Calculates individual avoidance influences from nearby characters (both NPCs and Players).
+    /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential characters.
+    /// </summary>
+    /// <returns>A list of the most influential character avoidances, limited to maxTrackedCharacters</returns>
+    private List<CharacterInfluence> GetCharacterHeuristics()
     {
-        // Get nearby NPCs from spatial grid and calculate avoidance
-        Vector3 avoidanceVector = Vector3.zero;
+        List<CharacterInfluence> allInfluences = new List<CharacterInfluence>();
+        
         if (SpatialGrid.Instance != null)
         {
-            List<NPCController> nearbyNPCs = SpatialGrid.Instance.GetNearbyNPCs(currentCell);
+            List<CharacterController> nearbyCharacters = SpatialGrid.Instance.GetNearbyCharacters(currentCell);
 
-            foreach (var otherNPC in nearbyNPCs)
+            foreach (var otherCharacter in nearbyCharacters)
             {
-                if (otherNPC == null || otherNPC == this) continue;
+                if (otherCharacter == null || otherCharacter == this) continue;
 
-                float distance = Vector3.Distance(transform.position, otherNPC.transform.position);
+                float distance = Vector3.Distance(transform.position, otherCharacter.transform.position);
 
-                // Only avoid NPCs within the avoidance radius
+                // Only avoid characters within the avoidance radius
                 if (distance < avoidanceRadius && distance > 0.1f)
                 {
-                    // Calculate direction away from the other NPC
-                    Vector3 awayFromNPC = (transform.position - otherNPC.transform.position).normalized;
+                    // Calculate direction away from the other character
+                    Vector3 awayFromCharacter = (transform.position - otherCharacter.transform.position).normalized;
 
                     // Calculate influence using the custom curve
                     // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
@@ -173,21 +209,36 @@ public class NPCController : CharacterController
                     // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
                     float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
 
-                    // Add weighted avoidance vector
-                    avoidanceVector += awayFromNPC * influence;
+                    // Create the influence data
+                    CharacterInfluence charInfluence = new CharacterInfluence
+                    {
+                        character = otherCharacter,
+                        avoidanceVector = awayFromCharacter * influence,
+                        distance = distance,
+                        influence = influence
+                    };
+
+                    allInfluences.Add(charInfluence);
                 }
             }
 
-            return avoidanceVector;
+            // Sort by influence (highest first) and take the top N
+            return allInfluences
+                .OrderByDescending(inf => inf.influence)
+                .Take(maxTrackedCharacters)
+                .ToList();
         }
+        
         UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
-        return avoidanceVector;
+        return allInfluences;
     }
 
 
     void FixedUpdate()
     {
+
         if (!IsOwner) { return; }
+
 
         // Update spatial grid cell if changed
         if (SpatialGrid.Instance != null)
@@ -195,7 +246,7 @@ public class NPCController : CharacterController
             Vector2Int newCell = SpatialGrid.Instance.GetCellCoords(transform.position);
             if (newCell != currentCell)
             {
-                SpatialGrid.Instance.UpdateNPC(this, currentCell, newCell);
+                SpatialGrid.Instance.UpdateCharacter(this, currentCell, newCell);
                 currentCell = newCell;
             }
         }
@@ -207,7 +258,6 @@ public class NPCController : CharacterController
         {
             case NPCStatesMicro.Standing:
 
-                
 
                 waypoint_time -= Time.fixedDeltaTime;
                 if (waypoint_time <= 0.0f)
@@ -219,6 +269,7 @@ public class NPCController : CharacterController
             case NPCStatesMicro.Walking:
 
                 DecideMovement();
+
 
                 //Conditions to stop Walking:
                 //if (!navMeshAgent.pathPending && navMeshAgent.remainingDistance <= navMeshAgent.stoppingDistance)
@@ -292,52 +343,13 @@ public class NPCController : CharacterController
     }
     */
 
-    /// <summary>
-    /// Calculates an avoidance vector to steer away from nearby players. I should prolly just use the spatial grid for this too but eh
-    /// </summary>
-    /// <returns>A vector representing the direction and intensity to avoid players</returns>
-    private Vector3 GetPlayerHeuristic()
-    {
-        Vector3 avoidanceVector = Vector3.zero;
-        
-        // Find all PlayerController instances in the scene
-        PlayerController[] allPlayers = FindObjectsByType<PlayerController>(FindObjectsSortMode.None);
-
-        foreach (var player in allPlayers)
-        {
-            if (player == null || !player.gameObject.activeInHierarchy) continue;
-
-            float distance = Vector3.Distance(transform.position, player.transform.position);
-
-            // Only avoid players within the avoidance radius
-            if (distance < avoidanceRadius && distance > 0.1f)
-            {
-                // Calculate direction away from the player
-                Vector3 awayFromPlayer = (transform.position - player.transform.position).normalized;
-
-                // Calculate influence using the custom curve
-                // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
-                float normalizedDistance = distance / avoidanceRadius;
-
-                // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
-                float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
-
-                // Add weighted avoidance vector
-                avoidanceVector += awayFromPlayer * influence;
-            }
-        }
-
-        return avoidanceVector;
-    }
-
-
     // TODO -> Run this upon npc death or removal
     private void UnregisterFromGrid()
     {
         // Unregister from spatial grid
         if (SpatialGrid.Instance != null)
         {
-            SpatialGrid.Instance.UnregisterNPC(this, currentCell);
+            SpatialGrid.Instance.UnregisterCharacter(this, currentCell);
         }
     }
 

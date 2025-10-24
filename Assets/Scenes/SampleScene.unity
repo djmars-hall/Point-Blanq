@@ -3944,7 +3944,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
-  timeLeftInMatch: 10
+  timeLeftInMatch: 100
   players:
   - {fileID: 1800148494}
   - {fileID: 659246451}
@@ -5320,11 +5320,18 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   npcPrefab: {fileID: 2356324329269177612, guid: 796defca7e14c14499cb80ae39f5895f, type: 3}
   maxNPCs: 200
-  maxDuplicatesPerPlayer: 40
+  maxDuplicatesPerPlayer: 30
   spawnRadius: 5.69
   npcList: []
   gatheringAreaParent: {fileID: 1496300170}
-  gatheringAreas: []
+  gatheringAreas:
+  - {fileID: 60914851}
+  - {fileID: 35064683}
+  - {fileID: 1002929656}
+  - {fileID: 633143435}
+  - {fileID: 294908854}
+  - {fileID: 1897491196}
+  - {fileID: 1257140465}
 --- !u!114 &1207174039
 MonoBehaviour:
   m_ObjectHideFlags: 0

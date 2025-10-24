@@ -302,7 +302,7 @@ GameObject:
   - component: {fileID: 631919494553011127}
   - component: {fileID: 2103409235735825001}
   - component: {fileID: 1842469610956331879}
-  - component: {fileID: 2511006467604601019}
+  - component: {fileID: 5528423676860217109}
   m_Layer: 0
   m_Name: NPC
   m_TagString: Untagged
@@ -398,8 +398,7 @@ MonoBehaviour:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
   avoidanceRadius: 6
-  NPCAvoidanceWeight: 0.8
-  playerAvoidanceWeight: 1
+  characterAvoidanceWeight: 0.8
   minMoveSpeed: 0.3
   avoidanceSlowdownFactor: 0.5
   avoidanceInfluenceCurve:
@@ -458,7 +457,7 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 1
   m_Center: {x: 0, y: 1, z: 0}
---- !u!114 &2511006467604601019
+--- !u!114 &5528423676860217109
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -467,12 +466,17 @@ MonoBehaviour:
   m_GameObject: {fileID: 4141185117210623128}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 41c5a5650b8205b4c98bec7bd5027198, type: 3}
+  m_Script: {fileID: 11500000, guid: 262cb74951e10844abeac7704235974d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  gizmoColor: {r: 1, g: 0, b: 0.8938141, a: 1}
-  gizmoRadius: 0.5
-  showOnlyWhenSelected: 0
+  showONLYWhenSelected: 0
+  showPathGizmos: 0
+  gizmoColor: {r: 1, g: 0, b: 1, a: 1}
+  gizmoRadius: 0.4
+  showHeuristics: 1
+  characterHeuristicColor: {r: 1, g: 0, b: 0, a: 1}
+  cornerHeuristicColor: {r: 0, g: 1, b: 0, a: 1}
+  heuristicLineScale: 2
 --- !u!1 &7255828250283823465
 GameObject:
   m_ObjectHideFlags: 0

@@ -3,7 +3,7 @@ using UnityEngine;
 
 /// <summary>
 /// Grid-based spatial partitioning system for efficient neighbor queries.
-/// Divides the world into cells and tracks which NPCs are in each cell.
+/// Divides the world into cells and tracks which Characters (NPCs and Players) are in each cell.
 /// </summary>
 public class SpatialGrid : MonoBehaviour
 {
@@ -20,12 +20,12 @@ public class SpatialGrid : MonoBehaviour
     [SerializeField] private int lowPopThreshold = 3;
     [SerializeField] private int mediumPopThreshold = 7;
 
-    private Dictionary<Vector2Int, List<NPCController>> grid = new Dictionary<Vector2Int, List<NPCController>>();
+    private Dictionary<Vector2Int, List<CharacterController>> grid = new Dictionary<Vector2Int, List<CharacterController>>();
     private HashSet<Vector2Int> occupiedCells = new HashSet<Vector2Int>();
     
     // Stats tracking
-    private int totalNPCs = 0;
-    public int TotalNPCs => totalNPCs;
+    private int totalCharacters = 0;
+    public int TotalCharacters => totalCharacters;
     public int OccupiedCellCount => occupiedCells.Count;
 
     [Header("Debug UI")]
@@ -51,11 +51,11 @@ public class SpatialGrid : MonoBehaviour
         GUI.Box(new Rect(debugUIPosition.x, debugUIPosition.y, 250, 100), "Spatial Grid Debug");
         
         GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 25, 230, 20), 
-            $"Total NPCs: {totalNPCs}");
+            $"Total Characters: {totalCharacters}");
         GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 45, 230, 20), 
             $"Occupied Cells: {occupiedCells.Count}");
         GUI.Label(new Rect(debugUIPosition.x + 10, debugUIPosition.y + 65, 230, 20), 
-            $"Avg NPCs/Cell: {(occupiedCells.Count > 0 ? (float)totalNPCs / occupiedCells.Count : 0):F1}");
+            $"Avg Characters/Cell: {(occupiedCells.Count > 0 ? (float)totalCharacters / occupiedCells.Count : 0):F1}");
     }
 
     /// <summary>
@@ -70,37 +70,37 @@ public class SpatialGrid : MonoBehaviour
     }
 
     /// <summary>
-    /// Registers an NPC in the grid at the specified cell.
+    /// Registers a Character in the grid at the specified cell.
     /// </summary>
-    public void RegisterNPC(NPCController npc, Vector2Int cellCoords)
+    public void RegisterCharacter(CharacterController character, Vector2Int cellCoords)
     {
-        if (npc == null) return;
+        if (character == null) return;
 
         if (!grid.ContainsKey(cellCoords))
         {
-            grid[cellCoords] = new List<NPCController>();
+            grid[cellCoords] = new List<CharacterController>();
         }
 
-        if (!grid[cellCoords].Contains(npc))
+        if (!grid[cellCoords].Contains(character))
         {
-            grid[cellCoords].Add(npc);
+            grid[cellCoords].Add(character);
             occupiedCells.Add(cellCoords);
-            totalNPCs++;
+            totalCharacters++;
         }
     }
 
     /// <summary>
-    /// Updates an NPC's cell membership when it moves between cells.
+    /// Updates a Character's cell membership when it moves between cells.
     /// </summary>
-    public void UpdateNPC(NPCController npc, Vector2Int oldCell, Vector2Int newCell)
+    public void UpdateCharacter(CharacterController character, Vector2Int oldCell, Vector2Int newCell)
     {
-        if (npc == null || oldCell == newCell) return;
+        if (character == null || oldCell == newCell) return;
 
         // Remove from old cell
         if (grid.ContainsKey(oldCell))
         {
-            grid[oldCell].Remove(npc);
-            totalNPCs--;
+            grid[oldCell].Remove(character);
+            totalCharacters--;
             
             // Clean up empty cells
             if (grid[oldCell].Count == 0)
@@ -111,20 +111,20 @@ public class SpatialGrid : MonoBehaviour
         }
 
         // Add to new cell
-        RegisterNPC(npc, newCell);
+        RegisterCharacter(character, newCell);
     }
 
     /// <summary>
-    /// Unregisters an NPC from the grid.
+    /// Unregisters a Character from the grid.
     /// </summary>
-    public void UnregisterNPC(NPCController npc, Vector2Int cellCoords)
+    public void UnregisterCharacter(CharacterController character, Vector2Int cellCoords)
     {
-        if (npc == null) return;
+        if (character == null) return;
 
         if (grid.ContainsKey(cellCoords))
         {
-            grid[cellCoords].Remove(npc);
-            totalNPCs--;
+            grid[cellCoords].Remove(character);
+            totalCharacters--;
             
             // Clean up empty cells
             if (grid[cellCoords].Count == 0)
@@ -136,11 +136,11 @@ public class SpatialGrid : MonoBehaviour
     }
 
     /// <summary>
-    /// Gets all NPCs in the current cell and 8 adjacent cells (3x3 grid).
+    /// Gets all Characters in the current cell and 8 adjacent cells (3x3 grid).
     /// </summary>
-    public List<NPCController> GetNearbyNPCs(Vector2Int cellCoords)
+    public List<CharacterController> GetNearbyCharacters(Vector2Int cellCoords)
     {
-        List<NPCController> nearby = new List<NPCController>();
+        List<CharacterController> nearby = new List<CharacterController>();
 
         // Check 3x3 grid
         for (int x = -1; x <= 1; x++)
@@ -148,9 +148,9 @@ public class SpatialGrid : MonoBehaviour
             for (int z = -1; z <= 1; z++)
             {
                 Vector2Int checkCell = cellCoords + new Vector2Int(x, z);
-                if (grid.TryGetValue(checkCell, out var npcsInCell))
+                if (grid.TryGetValue(checkCell, out var charactersInCell))
                 {
-                    nearby.AddRange(npcsInCell);
+                    nearby.AddRange(charactersInCell);
                 }
             }
         }
@@ -159,13 +159,13 @@ public class SpatialGrid : MonoBehaviour
     }
 
     /// <summary>
-    /// Gets the number of NPCs in a specific cell.
+    /// Gets the number of Characters in a specific cell.
     /// </summary>
     public int GetCellPopulation(Vector2Int cellCoords)
     {
-        if (grid.TryGetValue(cellCoords, out var npcsInCell))
+        if (grid.TryGetValue(cellCoords, out var charactersInCell))
         {
-            return npcsInCell.Count;
+            return charactersInCell.Count;
         }
         return 0;
     }

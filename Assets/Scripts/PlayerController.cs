@@ -75,7 +75,7 @@ public class PlayerController : CharacterController
     {
         rigidbody.linearVelocity = Vector3.zero;
         rigidbody.angularVelocity = Vector3.zero;
-        if (!IsOwner) { return; }
+        if (!GameManager.Instance.ignoreNetwork && !IsOwner) { return; }
         //Movement
         float h = moveDir.x;
         float v = moveDir.y;
@@ -93,13 +93,13 @@ public class PlayerController : CharacterController
             //transform.position = newPos;
             transform.Rotate(new Vector3(0, rot, 0));
         }
-        UpdatePositionClientRpc(rigidbody.position, transform.rotation);
+        if (!GameManager.Instance.ignoreNetwork) UpdatePositionClientRpc(rigidbody.position, transform.rotation);
     }
 
 
     private void LateUpdate()
     {
-        if (!IsOwner) return;
+        if (!GameManager.Instance.ignoreNetwork && !IsOwner) return;
 
         //Movement
         moveDir = move.action.ReadValue<Vector2>();
@@ -170,6 +170,13 @@ public class PlayerController : CharacterController
     public void ParentCameraRpc()
     {
         if (!IsOwner) { Debug.LogError("YOUR SUFFERING FROM A BIG BAD LACK OF CAMERA!"); return; }
+        Camera.main.transform.SetParent(transform.GetChild(0));
+        Camera.main.transform.localPosition = Vector3.zero;
+        Camera.main.transform.localRotation = Quaternion.identity;
+    }
+
+    public void ParentCamera()
+    {
         Camera.main.transform.SetParent(transform.GetChild(0));
         Camera.main.transform.localPosition = Vector3.zero;
         Camera.main.transform.localRotation = Quaternion.identity;

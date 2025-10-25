@@ -1,15 +1,17 @@
-using System.Diagnostics;
-using UnityEngine;
-using Unity.Netcode;
-using UnityEngine.AI;
 using NUnit.Framework;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using Unity.Netcode;
+using UnityEngine;
+using UnityEngine.AI;
+using UnityEngine.Splines;
+using static UnityEngine.UI.GridLayoutGroup;
 
 public class NPCController : BaseCharController
 {
 
-    enum NPCStatesMicro
+    public enum NPCStatesMicro
     {
         Standing,
         Walking,
@@ -23,6 +25,10 @@ public class NPCController : BaseCharController
 
     NPCStatesMacro macroState = NPCStatesMacro.WaypointWandering;
     NPCStatesMicro microState = NPCStatesMicro.Walking;
+    
+    // Public getter to expose the micro state
+    public NPCStatesMicro MicroState => microState;
+    
     Vector3 current_waypoint;
     float waypoint_time;
     private List<Vector3> pathCorners = new List<Vector3>();
@@ -39,14 +45,22 @@ public class NPCController : BaseCharController
     [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
     [SerializeField] private int maxTrackedCharacters = 3;
 
+    [Header("Path Edge Avoidance")]
+    [SerializeField] private float edgeBuffer = 1.2f; // Distance to maintain from NavMesh edges
+    [SerializeField] private float edgeAvoidanceRadius = 3f; // How far to check for edges
+    [SerializeField] private float edgeAvoidanceWeight = 0.6f; // Strength of edge avoidance
+    [SerializeField] private AnimationCurve edgeAvoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
+
     //Heuristics
     private List<Vector3> characterHeuristics = new List<Vector3>();
     private Vector3 cornerHeuristic;
+    private Vector3 edgeHeuristic;
     private Vector3 desiredDirection;
 
     //Public getters for heuristics for gizmo drawing
     public List<Vector3> CharacterHeuristics => characterHeuristics;
     public Vector3 CornerHeuristic => cornerHeuristic;
+    public Vector3 EdgeHeuristic => edgeHeuristic;
     public Vector3 DesiredDirection => desiredDirection;
 
     private void Start()
@@ -84,20 +98,117 @@ public class NPCController : BaseCharController
         if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
         {
             current_waypoint = hit.position;
-            //navMeshAgent.SetDestination(current_waypoint);
-            NavMeshPath pathReturned = new NavMeshPath();
 
+            NavMeshPath pathReturned = new NavMeshPath();
 
             NavMesh.CalculatePath(transform.position, current_waypoint, NavMesh.AllAreas, pathReturned);
 
             pathCorners = new List<Vector3>(pathReturned.corners);
 
+            // Adjust corners to maintain distance from NavMesh edges
+            pathCorners = AdjustCornersAwayFromEdges(pathCorners);
+
             waypoint_time = Random.Range(3.0f, 12.0f);
             microState = NPCStatesMicro.Walking;
         }
-
     }
 
+    /// <summary>
+    /// Adjusts path corners to maintain a minimum distance from NavMesh edges.
+    /// Samples in multiple directions around each corner to find positions further from edges.
+    /// </summary>
+    /// <param name="corners">Original path corners from NavMesh</param>
+    /// <param name="minDistanceFromEdge">Minimum desired distance from edges</param>
+    /// <returns>List of adjusted corner positions</returns>
+    private List<Vector3> AdjustCornersAwayFromEdges(List<Vector3> corners)
+    {
+        List<Vector3> adjustedCorners = new List<Vector3>();
+
+        for (int i = 0; i < corners.Count; i++)
+        {
+            Vector3 corner = corners[i];
+            Vector3 adjustedCorner = corner;
+            
+            // Check if this corner is too close to an edge
+            NavMeshHit edgeHit;
+            if (NavMesh.FindClosestEdge(corner, out edgeHit, NavMesh.AllAreas))
+            {
+                float distToEdge = edgeHit.distance;
+
+                SpawnMarker(edgeHit.position, i, " Edge Hit. Too Close?");
+
+                // Check if the corner is too close to the edge.
+                if (distToEdge < edgeBuffer)
+                {
+                    SpawnMarker(corner, i, " TOO CLOSE!!!");
+
+                    // Calculate direction away from edge
+                    Vector3 pushDirection = edgeHit.normal;
+                    
+                    // Calculate how much farther we need to push (plus a little to offset)
+                    float deficit = (edgeBuffer - distToEdge) + 0.2f;
+                    
+                    // Calculate the new position
+                    Vector3 newPosition = corner + pushDirection * deficit;
+
+                    SpawnMarker(newPosition, i, " New Position.");
+
+                    // Re-sample the new position on the NavMesh to ensure it is valid.
+                    NavMeshHit newHit;
+                    if (NavMesh.SamplePosition(newPosition, out newHit, edgeBuffer * 2, NavMesh.AllAreas))
+                    {
+                        adjustedCorner = AdjustForOverCorrection(newHit.position, i);
+                        SpawnMarker(adjustedCorner, i, " Corrected Pos");
+                    }
+                }
+            }
+            
+            adjustedCorners.Add(adjustedCorner);
+        }
+        
+        return adjustedCorners;
+    }
+
+    private Vector3 AdjustForOverCorrection(Vector3 generatedPoint, int order)
+    {
+        NavMeshHit edgeHit;
+        if (NavMesh.FindClosestEdge(generatedPoint, out edgeHit, NavMesh.AllAreas))
+        {
+            float distToEdge = edgeHit.distance;
+
+            SpawnMarker(edgeHit.position, order, " Edge Hit. Overcorrection?");
+
+            if (distToEdge < edgeBuffer)
+            {
+                //Generate a new point, then take the average of the two
+                SpawnMarker(edgeHit.position, order, " TOO CLOSE!!! OverCorrection!");
+
+                // Calculate direction away from edge
+                Vector3 pushDirection = edgeHit.normal;
+
+                // Calculate how much farther we need to push
+                float deficit = edgeBuffer - distToEdge;
+
+                // Calculate the new position (in between corrected position and newly generated position)
+                Vector3 newPosition = ((generatedPoint + pushDirection * deficit) + generatedPoint) / 2;
+
+                SpawnMarker(newPosition, order, " New Position. Corrected!");
+
+                // Re-sample the new position on the NavMesh to ensure it is valid.
+                NavMeshHit newHit;
+                if (NavMesh.SamplePosition(newPosition, out newHit, edgeBuffer * 2, NavMesh.AllAreas))
+                {
+                    return newHit.position;
+                }
+            }
+            else
+            {
+                return generatedPoint;
+            }
+
+        }
+        throw new System.Exception("AdjustForOverCorrection failed to find edge!");
+    }
 
     private void DecideMovement()
     {
@@ -129,13 +240,16 @@ public class NPCController : BaseCharController
         //Character Heuristic (NPCs and Players):
         characterHeuristics = GetCharacterHeuristics();
 
+        //Edge Heuristic (NavMesh edges):
+        edgeHeuristic = GetEdgeHeuristic();
 
-        // Calculate desired direction by blending corner heuristic with weighted character heuristics
+        // Calculate desired direction by blending corner heuristic with weighted character heuristics and edge heuristic
         desiredDirection = cornerHeuristic;
         foreach (var characterHeuristic in characterHeuristics)
         {
             desiredDirection += characterHeuristic * characterAvoidanceWeight;
         }
+        desiredDirection += edgeHeuristic * edgeAvoidanceWeight;
         desiredDirection = desiredDirection.normalized;
 
         // Calculate how aligned the NPC's forward direction is with the desired direction
@@ -171,7 +285,7 @@ public class NPCController : BaseCharController
 
     /// <summary>
     /// Calculates the corner heuristic vector pointing toward the next path corner.
-    /// </summary>
+    /// /// </summary>
     /// <returns></returns>
     private Vector3 GetCornerHeuristic()
     {
@@ -249,6 +363,42 @@ public class NPCController : BaseCharController
         return new List<Vector3>();
     }
 
+
+    /// <summary>
+    /// Calculates an avoidance vector away from the closest NavMesh edge.
+    /// Returns a vector pointing away from the edge with magnitude based on distance.
+    /// </summary>
+    /// <returns>Edge avoidance vector, or Vector3.zero if no edge is nearby</returns>
+    private Vector3 GetEdgeHeuristic()
+    {
+        NavMeshHit edgeHit;
+        
+        // Find the closest edge within the avoidance radius
+        if (NavMesh.FindClosestEdge(transform.position, out edgeHit, NavMesh.AllAreas))
+        {
+            float distanceToEdge = edgeHit.distance;
+            
+            // Only apply avoidance if within the edge avoidance radius
+            if (distanceToEdge < edgeAvoidanceRadius && distanceToEdge > 0.1f)
+            {
+                // Direction away from the edge (using the edge normal)
+                Vector3 awayFromEdge = edgeHit.normal;
+                awayFromEdge.y = 0; // Keep avoidance on horizontal plane
+                awayFromEdge = awayFromEdge.normalized;
+                
+                // Calculate influence using the custom curve
+                // Normalize distance to 0-1 range (0 = at edge, 1 = at edgeAvoidanceRadius)
+                float normalizedDistance = distanceToEdge / edgeAvoidanceRadius;
+                
+                // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
+                float influence = edgeAvoidanceInfluenceCurve.Evaluate(normalizedDistance);
+                
+                return awayFromEdge * influence;
+            }
+        }
+        
+        return Vector3.zero;
+    }
 
     void FixedUpdate()
     {
@@ -367,6 +517,22 @@ public class NPCController : BaseCharController
         {
             SpatialGrid.Instance.UnregisterCharacter(this, currentCell);
         }
+    }
+
+
+    /// <summary>
+    /// FOR DEBUG PURPOSES ONLY: Spawns a marker at the given position with order and label info.
+    /// SHOULD ONLY BE USED WITH ONE NPC TO AVOID MARKER OVERLOAD.
+    /// </summary>
+    /// <param name="spawnPos"></param>
+    /// <param name="order"></param>
+    /// <param name="label"></param>
+    private void SpawnMarker(Vector3 spawnPos, int order, string label)
+    {
+        //GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        //cube.transform.localScale = Vector3.one * 0.5f;
+        //cube.transform.position = spawnPos;
+        //cube.name = order + label;
     }
 
 }

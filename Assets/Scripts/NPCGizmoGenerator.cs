@@ -17,16 +17,24 @@ public class NPCGizmoGenerator : MonoBehaviour
     [Header("Heuristic Gizmo Settings")]
     [SerializeField] private bool showHeuristics = true;
     [SerializeField] private Color cornerHeuristicColor = Color.green;
+    [SerializeField] private Color edgeHeuristicColor = new Color(1f, 0f, 1f); // Magenta
     [SerializeField] private Color desiredDirectionColor = Color.cyan;
     [SerializeField] private float heuristicLineScale = 2f;
     [SerializeField] private float desiredDirectionScale = 3f;
-    [SerializeField] private float desiredDirectionThickness = 0.15f;
     [SerializeField] private float smallArrowSize = 0.15f;
     
     [Header("Character Heuristic Colors")]
     [SerializeField] private Color closestCharacterColor = Color.red;
     [SerializeField] private Color secondCharacterColor = new Color(1f, 0.5f, 0f); // Orange
     [SerializeField] private Color thirdCharacterColor = Color.yellow;
+
+
+    private NPCController npcController;
+
+    private void Start()
+    {
+        npcController = GetComponent<NPCController>();
+    }
 
     private void OnDrawGizmos()
     {
@@ -45,9 +53,13 @@ public class NPCGizmoGenerator : MonoBehaviour
     private void DrawPathGizmos()
     {
         if (!showPaths) return;
-        if (GetComponent<NPCController>() == null) return;
+        
+        if (npcController == null) return;
+        
+        // Don't draw gizmos if NPC is in standing mode
+        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
 
-        pathCorners = GetComponent<NPCController>().PathCorners;
+        pathCorners = npcController.PathCorners;
 
         if (pathCorners == null || pathCorners.Count == 0) return;
         Gizmos.color = gizmoColor;
@@ -71,8 +83,10 @@ public class NPCGizmoGenerator : MonoBehaviour
     {
         if (!showHeuristics) return;
 
-        NPCController npcController = GetComponent<NPCController>();
         if (npcController == null) return;
+        
+        // Don't draw gizmos if NPC is in standing mode
+        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
 
         Vector3 npcPosition = transform.position + offset;
 
@@ -84,6 +98,16 @@ public class NPCGizmoGenerator : MonoBehaviour
             Vector3 endPoint = npcPosition + cornerHeuristic * heuristicLineScale;
             Gizmos.DrawLine(npcPosition, endPoint);
             DrawArrowHead(endPoint, cornerHeuristic, smallArrowSize);
+        }
+
+        // Draw Edge Heuristic (NavMesh edge avoidance)
+        Vector3 edgeHeuristic = npcController.EdgeHeuristic;
+        if (edgeHeuristic.magnitude > 0.01f)
+        {
+            Gizmos.color = edgeHeuristicColor;
+            Vector3 endPoint = npcPosition + edgeHeuristic * heuristicLineScale;
+            Gizmos.DrawLine(npcPosition, endPoint);
+            DrawArrowHead(endPoint, edgeHeuristic, smallArrowSize);
         }
 
         // Draw Individual Character Heuristics
@@ -127,9 +151,6 @@ public class NPCGizmoGenerator : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Draws an arrow head at the end of a line
-    /// </summary>
     private void DrawArrowHead(Vector3 tip, Vector3 direction, float size)
     {
         Vector3 normalizedDir = direction.normalized;

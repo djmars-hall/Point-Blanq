@@ -1747,7 +1747,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &193824376
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5379,7 +5379,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cellSize: 4
-  drawDebugGizmos: 1
+  drawDebugGizmos: 0
   drawCellBoundaries: 1
   showCellPopulation: 1
   emptyCellColor: {r: 0, g: 1, b: 0, a: 0.39215687}
@@ -7329,7 +7329,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1655956129
 Transform:
   m_ObjectHideFlags: 0

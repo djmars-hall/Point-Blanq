@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -28,6 +29,15 @@ public class NPCManager : NetworkBehaviour
     private void Awake()
     {
         Instance = this;
+    }
+
+    private void Start()
+    {
+        if (!IsHost) return;
+    }
+
+    public void Initialize()
+    {
         if (!IsHost) return;
         gatheringAreas = new GatheringArea[gatheringAreaParent.childCount];
         for (int i = 0; i < gatheringAreaParent.childCount; i++)
@@ -35,11 +45,7 @@ public class NPCManager : NetworkBehaviour
             gatheringAreas[i] = gatheringAreaParent.GetChild(i).GetComponent<GatheringArea>();
         }
         npcList = new NPCController[maxNPCs];
-    }
-
-    public void Initialize()
-    {
-        if (!IsHost) return;
+        Debug.Log("NPCManager Start call!");
         for (int i = 0; i < BountyManager.Instance.players.Count; i++)
         {
             //Material material = BountyManager.Instance.playerMaterials[i];
@@ -81,12 +87,20 @@ public class NPCManager : NetworkBehaviour
     // Function for cleaning up npcs and other resources at the end of battle
     public void Cleanup()
     {
-        npcList = null;
         // Delete them all if we REALLY need to
+        // (Bandaid solution that we can cleanup later if we figure it out)
+        Debug.Log(npcList.Length);
+        Debug.Log(npcList);
+        for (int i = 0; i < maxNPCs; i++)
+        {
+            if (npcList[i] == null) continue;
+            Debug.Log("Despawning!");
+            npcList[i].NetworkObject.Despawn(true);
+        }
+        npcList = null;
     }
 
     //RPC Spawn NPC Function^^^^
-
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.magenta;

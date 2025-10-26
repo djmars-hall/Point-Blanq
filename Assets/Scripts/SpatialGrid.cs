@@ -209,7 +209,7 @@ public class SpatialGrid : MonoBehaviour
             if (showCellPopulation && population > 0)
             {
                 Gizmos.color = Color.yellow;
-                float radius = 0.1f + (population * 0.05f);
+                float radius = 0.15f + (population * 0.15f);
                 Gizmos.DrawSphere(cellCenter + Vector3.up * 3f, Mathf.Min(radius, 0.5f));
             }
         }

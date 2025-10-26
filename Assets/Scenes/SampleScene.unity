@@ -5378,8 +5378,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 880d4aae1c3808a4999160b2888a0e43, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  cellSize: 4
-  drawDebugGizmos: 0
+  cellSize: 5
+  drawDebugGizmos: 1
   drawCellBoundaries: 1
   showCellPopulation: 1
   emptyCellColor: {r: 0, g: 1, b: 0, a: 0.39215687}

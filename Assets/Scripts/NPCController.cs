@@ -37,7 +37,8 @@ public class NPCController : BaseCharController
     // Spatial grid tracking
     private Vector2Int currentCell;
 
-    [Header("Avoidance Settings")]
+    [Header("Character Avoidance Settings")]
+    [SerializeField] private float characterBARRIER = 0.9f; // Strength of character heuristic when any contridicting characters are zeroed out (except edge)
     [SerializeField] private float avoidanceRadius = 6f;
     [SerializeField] private float characterAvoidanceWeight = 0.8f;
     [SerializeField] private float minMoveSpeed = 0.3f;
@@ -45,7 +46,8 @@ public class NPCController : BaseCharController
     [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
     [SerializeField] private int maxTrackedCharacters = 3;
 
-    [Header("Path Edge Avoidance")]
+    [Header("Edge Avoidance Settings")]
+    [SerializeField] private float edgeBARRIER = 0.9f; // Strength of edge heuristic when any contridicting edges are zeroed out
     [SerializeField] private float edgeBuffer = 1.2f; // Distance to maintain from NavMesh edges
     [SerializeField] private float edgeAvoidanceRadius = 3f; // How far to check for edges
     [SerializeField] private float edgeAvoidanceWeight = 0.6f; // Strength of edge avoidance
@@ -234,14 +236,46 @@ public class NPCController : BaseCharController
             }
         }
 
-        //Corner Heuristic:
+        // Check if we're closer to the next corner than the current one (corner-cutting optimization)
+        if (pathCorners.Count > 1)
+        {
+            float distToCurrent = Vector3.Distance(pathCorners[0], transform.position);
+            float distToNext = Vector3.Distance(pathCorners[1], transform.position);
+            float distFromCurrentToNext = Vector3.Distance(pathCorners[0], pathCorners[1]);
+
+            if (distToNext < distToCurrent)
+            {
+                // Skip the current corner since we're already closer to the next one
+                pathCorners.RemoveAt(0);
+            }
+            else if(distToNext < distFromCurrentToNext)
+            {
+                // Skip the current corner since we're on our way to the next one
+                UnityEngine.Debug.Log("This could cause NPCs to walk through walls if not careful!");
+                pathCorners.RemoveAt(0);
+            }
+        }
+
+        //Corner Heuristic (Pathway Corners)
         cornerHeuristic = GetCornerHeuristic();
             
         //Character Heuristic (NPCs and Players):
         characterHeuristics = GetCharacterHeuristics();
 
-        //Edge Heuristic (NavMesh edges):
+        //Edge Heuristic (NavMesh Edges):
         edgeHeuristic = GetEdgeHeuristic();
+
+        //If Edge Heuristic is too strong, nullify any heuristic towards edge
+        if (edgeHeuristic.magnitude > edgeBARRIER)
+        {
+            DenyOtherHeuristics(edgeHeuristic.normalized);
+        }
+
+        //If the closest character heuristic is too strong, nullify any heuristic towards character (except for edge)
+        if (characterHeuristics.Count > 0 && characterHeuristics[0].magnitude > characterBARRIER)
+        {
+            DenyOtherHeuristics(characterHeuristics[0].normalized);
+        }
 
         // Calculate desired direction by blending corner heuristic with weighted character heuristics and edge heuristic
         desiredDirection = cornerHeuristic;
@@ -258,6 +292,9 @@ public class NPCController : BaseCharController
         // Calculate the rotation needed (using the right vector to determine turn direction)
         float rightAlignment = Vector3.Dot(transform.right, desiredDirection);
 
+        // Check if we need to turn around (desired direction is opposite to current facing)
+        bool needsToTurnAround = forwardAlignment < -0.5f; // Threshold for considering it "opposite"
+
         // Rotation: Turn toward the desired direction
         // Scale rotation by how far we need to turn (larger misalignment = faster turn)
         float rotationDir = Mathf.Clamp(rightAlignment, -1f, 1f);
@@ -266,27 +303,77 @@ public class NPCController : BaseCharController
         // This creates more natural movement where NPCs slow down to turn
         float speedMultiplier = Mathf.Clamp01(forwardAlignment);
         
-        // Apply minimum speed so NPC doesn't stop completely when turning
-        speedMultiplier = Mathf.Max(speedMultiplier, minMoveSpeed);
-
-        // Apply slowdown when avoiding characters (based on total character heuristic magnitude)
-        float totalCharacterInfluence = 0f;
-        foreach (var characterHeuristic in characterHeuristics)
+        // If we need to turn around, stop moving and just rotate
+        if (needsToTurnAround)
         {
-            totalCharacterInfluence += characterHeuristic.magnitude;
+            speedMultiplier = 0f;
         }
-        float avoidanceIntensity = Mathf.Clamp01(totalCharacterInfluence);
-        speedMultiplier *= Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
+        else
+        {
+            // Apply minimum speed so NPC doesn't stop completely when turning
+            speedMultiplier = Mathf.Max(speedMultiplier, minMoveSpeed);
+
+            // Apply slowdown when avoiding characters (based on total character heuristic magnitude)
+            float totalCharacterInfluence = 0f;
+            foreach (var characterHeuristic in characterHeuristics)
+            {
+                totalCharacterInfluence += characterHeuristic.magnitude;
+            }
+            float avoidanceIntensity = Mathf.Clamp01(totalCharacterInfluence);
+            speedMultiplier *= Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
+        }
 
         // Execute movement with the calculated speed and rotation
         ProcessMovement(speedMultiplier, rotationDir);
+    }
+
+    /// <summary>
+    /// If any heuristic is too strong this function nullifies any (except edge--its too high priority) heuristic that contradicts it
+    /// </summary>
+    /// <param name="normalizedTargetHeuristic"></param>
+    private void DenyOtherHeuristics(Vector3 normalizedTargetHeuristic)
+    {
+        if (Vector3.Dot(cornerHeuristic.normalized, normalizedTargetHeuristic) < 0)
+        {
+            cornerHeuristic = ReorientHeuristics(normalizedTargetHeuristic, cornerHeuristic);
+        }
+        if (characterHeuristics.Count > 0)
+        {
+            for (int i = 0; i < characterHeuristics.Count; i++)
+            {
+                if (Vector3.Dot(characterHeuristics[i].normalized, normalizedTargetHeuristic) < 0)
+                {
+                    characterHeuristics[i] = ReorientHeuristics(normalizedTargetHeuristic, characterHeuristics[i]);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reorients a heuristic to be perpendicular to a target heuristic
+    /// </summary>
+    /// <param name="normalizedTargetHeuristic"></param>
+    /// <param name="heuristicToModify"></param>
+    /// <returns>The Vector3 of the reoriented Heuristic</returns>
+    private Vector3 ReorientHeuristics(Vector3 normalizedTargetHeuristic, Vector3 heuristicToModify)
+    {
+        // Calculate both perpendiculars to the target heuristic
+        Vector3 perp1 = Vector3.Cross(normalizedTargetHeuristic, Vector3.up).normalized;
+        Vector3 perp2 = -perp1;
+
+        // Choose the perpendicular closest to the original heuristic direction
+        float dot1 = Vector3.Dot(heuristicToModify.normalized, perp1);
+        float dot2 = Vector3.Dot(heuristicToModify.normalized, perp2);
+
+        Vector3 closestPerp = (dot1 > dot2) ? perp1 : perp2;
+        return closestPerp * heuristicToModify.magnitude;
     }
 
 
     /// <summary>
     /// Calculates the corner heuristic vector pointing toward the next path corner.
     /// /// </summary>
-    /// <returns></returns>
+    /// <returns>The corner Heuristic</returns>
     private Vector3 GetCornerHeuristic()
     {
         // Calculate distance to next corner
@@ -367,8 +454,9 @@ public class NPCController : BaseCharController
     /// <summary>
     /// Calculates an avoidance vector away from the closest NavMesh edge.
     /// Returns a vector pointing away from the edge with magnitude based on distance.
+    /// Checks for opposing edges to prevent getting stuck between two edges.
     /// </summary>
-    /// <returns>Edge avoidance vector, or Vector3.zero if no edge is nearby</returns>
+    /// <returns>Edge avoidance vector, or Vector3.zero if no edge is nearby or caught between edges</returns>
     private Vector3 GetEdgeHeuristic()
     {
         NavMeshHit edgeHit;
@@ -393,11 +481,62 @@ public class NPCController : BaseCharController
                 // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
                 float influence = edgeAvoidanceInfluenceCurve.Evaluate(normalizedDistance);
                 
-                return awayFromEdge * influence;
+                Vector3 edgeAvoidanceVector = awayFromEdge * influence;
+                
+                // Check if there's an opposing edge that would contradict this heuristic
+                // Only nullify if the heuristic is weak AND we're truly trapped
+                if (edgeAvoidanceVector.magnitude < 0.2f && HasOpposingEdge(awayFromEdge, distanceToEdge))
+                {
+                    // Caught between two edges with weak influence, nullify to avoid oscillation
+                    return Vector3.zero;
+                }
+                
+                return edgeAvoidanceVector;
             }
         }
         
         return Vector3.zero;
+    }
+
+    /// <summary>
+    /// Checks if there is an opposing edge in the direction we want to move away from the closest edge.
+    /// This prevents the NPC from getting stuck oscillating between two close edges.
+    /// Uses stricter thresholds to only detect true opposing edge situations.
+    /// </summary>
+    /// <param name="avoidanceDirection">The direction we want to move away from the closest edge</param>
+    /// <param name="closestEdgeDistance">Distance to the closest edge</param>
+    /// <returns>True if there's an opposing edge that would contradict the avoidance direction</returns>
+    private bool HasOpposingEdge(Vector3 avoidanceDirection, float closestEdgeDistance)
+    {
+        // Sample a point in the avoidance direction to check for an opposing edge
+        // Use a tighter check radius (half of edgeBuffer)
+        Vector3 checkPosition = transform.position + avoidanceDirection * (edgeBuffer * 0.5f);
+        
+        NavMeshHit opposingEdgeHit;
+        if (NavMesh.FindClosestEdge(checkPosition, out opposingEdgeHit, NavMesh.AllAreas))
+        {
+            float opposingDistance = opposingEdgeHit.distance;
+            
+            // Only consider it an opposing edge if it's very close (tighter threshold)
+            if (opposingDistance < edgeBuffer * 0.5f)
+            {
+                // Check if this edge's normal points back toward us (opposing the avoidance direction)
+                Vector3 opposingNormal = opposingEdgeHit.normal;
+                opposingNormal.y = 0;
+                opposingNormal = opposingNormal.normalized;
+                
+                // If the dot product is negative, the normals point in opposite directions
+                // Use stricter threshold (-0.7) to ensure they're truly opposing
+                float alignment = Vector3.Dot(avoidanceDirection, opposingNormal);
+                
+                if (alignment < -0.7f) // Stricter threshold to detect truly opposing edges
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 
     void FixedUpdate()

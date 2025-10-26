@@ -397,9 +397,9 @@ MonoBehaviour:
   meshes:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
-  avoidanceRadius: 6
-  characterAvoidanceWeight: 0.8
-  minMoveSpeed: 0.3
+  avoidanceRadius: 3
+  characterAvoidanceWeight: 0.5
+  minMoveSpeed: 0.4
   avoidanceSlowdownFactor: 0.5
   avoidanceInfluenceCurve:
     serializedVersion: 2
@@ -412,29 +412,21 @@ MonoBehaviour:
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0.2638889
-    - serializedVersion: 3
-      time: 0.41719526
-      value: 0.19824445
-      inSlope: -1.2824208
-      outSlope: -1.2824208
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.08077974
+      outWeight: 0
     - serializedVersion: 3
       time: 1
       value: 0
-      inSlope: -0.098271154
-      outSlope: -0.098271154
+      inSlope: 0
+      outSlope: 0
       tangentMode: 0
       weightedMode: 0
-      inWeight: 0.08641976
+      inWeight: 0
       outWeight: 0
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
   maxTrackedCharacters: 3
+  edgeBARRIER: 0.7
   edgeBuffer: 2
   edgeAvoidanceRadius: 3
   edgeAvoidanceWeight: 0.6
@@ -444,12 +436,12 @@ MonoBehaviour:
     - serializedVersion: 3
       time: 0
       value: 1
-      inSlope: 0
-      outSlope: 0
+      inSlope: -3.147384
+      outSlope: -3.147384
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0
+      outWeight: 0.043209877
     - serializedVersion: 3
       time: 1
       value: 0
@@ -498,7 +490,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   showONLYWhenSelected: 0
-  showPaths: 0
+  showPaths: 1
   gizmoColor: {r: 1, g: 0, b: 1, a: 1}
   gizmoRadius: 0.4
   showHeuristics: 1
@@ -506,7 +498,6 @@ MonoBehaviour:
   edgeHeuristicColor: {r: 1, g: 0, b: 1, a: 1}
   desiredDirectionColor: {r: 0, g: 1, b: 1, a: 1}
   heuristicLineScale: 2
-  desiredDirectionScale: 3
   smallArrowSize: 0.15
   closestCharacterColor: {r: 1, g: 0, b: 0, a: 1}
   secondCharacterColor: {r: 1, g: 0.5, b: 0, a: 1}

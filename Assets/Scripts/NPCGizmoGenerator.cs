@@ -10,9 +10,10 @@ public class NPCGizmoGenerator : MonoBehaviour
     [SerializeField] private bool showPaths = true;
     [SerializeField] private Color gizmoColor = Color.magenta;
     [SerializeField] private float gizmoRadius = 0.4f;
+    [SerializeField] private Vector2 rectangleSize = new Vector2(2f, 0.5f); // Width and Height of corner rectangles
     private List<Vector3> pathCorners;
 
-    private Vector3 offset = new Vector3(0, 1f, 0);
+    private Vector3 offset = new Vector3(0, 1.2f, 0);
 
     [Header("Heuristic Gizmo Settings")]
     [SerializeField] private bool showHeuristics = true;
@@ -20,7 +21,6 @@ public class NPCGizmoGenerator : MonoBehaviour
     [SerializeField] private Color edgeHeuristicColor = new Color(1f, 0f, 1f); // Magenta
     [SerializeField] private Color desiredDirectionColor = Color.cyan;
     [SerializeField] private float heuristicLineScale = 2f;
-    [SerializeField] private float desiredDirectionScale = 3f;
     [SerializeField] private float smallArrowSize = 0.15f;
     
     [Header("Character Heuristic Colors")]
@@ -67,7 +67,25 @@ public class NPCGizmoGenerator : MonoBehaviour
         // Draw spheres at each corner and lines between them
         for (int i = 0; i < pathCorners.Count; i++)
         {
-            Gizmos.DrawSphere(pathCorners[i] + offset, gizmoRadius);
+            Vector3 cornerPosition = pathCorners[i] + offset;
+            
+            // Calculate the direction from the previous point to this corner
+            Vector3 directionToPrevious;
+            if (i == 0)
+            {
+                // First corner: use direction from NPC position to first corner
+                directionToPrevious = (pathCorners[0] - transform.position).normalized;
+            }
+            else
+            {
+                // Other corners: use direction from previous corner to this corner
+                directionToPrevious = (pathCorners[i] - pathCorners[i - 1]).normalized;
+            }
+            
+            // Draw rectangle perpendicular to the incoming direction
+            DrawPerpendicularRectangle(cornerPosition, directionToPrevious, rectangleSize);
+            
+            // Draw line to next corner
             if (i < pathCorners.Count - 1)
             {
                 Gizmos.DrawLine(pathCorners[i] + offset, pathCorners[i + 1] + offset);
@@ -77,6 +95,33 @@ public class NPCGizmoGenerator : MonoBehaviour
         // Draw first line and sphere from NPC to first corner
         Gizmos.DrawLine(transform.position + offset, pathCorners[0] + offset);
         Gizmos.DrawSphere(transform.position + offset, gizmoRadius);
+    }
+
+    /// <summary>
+    /// Draws a rectangle at the given position, perpendicular to the given direction
+    /// </summary>
+    /// <param name="position">Center position of the rectangle</param>
+    /// <param name="direction">Direction that the rectangle should be perpendicular to</param>
+    /// <param name="size">Size of the rectangle (x = width, y = height)</param>
+    private void DrawPerpendicularRectangle(Vector3 position, Vector3 direction, Vector2 size)
+    {
+        // Flatten direction to XZ plane
+        direction.y = 0;
+        direction.Normalize();
+        
+        // Calculate the rotation to make the rectangle perpendicular to the direction
+        // The rectangle's forward should point in the direction of travel
+        Quaternion rotation = Quaternion.LookRotation(direction, Vector3.up);
+        
+        // Create the rectangle dimensions (thin in the Z direction)
+        Vector3 cubeSize = new Vector3(size.x, size.y, 0.1f);
+        
+        // Draw the rotated cube
+        Matrix4x4 oldMatrix = Gizmos.matrix;
+        Gizmos.matrix = Matrix4x4.TRS(position, rotation, Vector3.one);
+        Gizmos.DrawCube(Vector3.zero, cubeSize);
+        Gizmos.DrawWireCube(Vector3.zero, cubeSize);
+        Gizmos.matrix = oldMatrix;
     }
 
     private void DrawHeuristicGizmos()
@@ -96,7 +141,7 @@ public class NPCGizmoGenerator : MonoBehaviour
         {
             Gizmos.color = cornerHeuristicColor;
             Vector3 endPoint = npcPosition + cornerHeuristic * heuristicLineScale;
-            Gizmos.DrawLine(npcPosition, endPoint);
+            Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
             DrawArrowHead(endPoint, cornerHeuristic, smallArrowSize);
         }
 
@@ -106,7 +151,7 @@ public class NPCGizmoGenerator : MonoBehaviour
         {
             Gizmos.color = edgeHeuristicColor;
             Vector3 endPoint = npcPosition + edgeHeuristic * heuristicLineScale;
-            Gizmos.DrawLine(npcPosition, endPoint);
+            Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
             DrawArrowHead(endPoint, edgeHeuristic, smallArrowSize);
         }
 
@@ -133,7 +178,7 @@ public class NPCGizmoGenerator : MonoBehaviour
                 if (characterHeuristic.magnitude > 0.01f)
                 {
                     Vector3 endPoint = npcPosition + characterHeuristic * heuristicLineScale;
-                    Gizmos.DrawLine(npcPosition, endPoint);
+                    Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
                     DrawArrowHead(endPoint, characterHeuristic, smallArrowSize);
                 }
             }
@@ -144,10 +189,10 @@ public class NPCGizmoGenerator : MonoBehaviour
         if (desiredDirection.magnitude > 0.01f)
         {
             Gizmos.color = desiredDirectionColor;
-            Vector3 endPoint = npcPosition + desiredDirection * desiredDirectionScale;
+            Vector3 endPoint = npcPosition + desiredDirection * heuristicLineScale;
 
-            Gizmos.DrawLine(npcPosition, endPoint);
-            DrawArrowHead(endPoint, desiredDirection, 0.3f); // Large arrowhead for desired direction
+            Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
+            DrawArrowHead(endPoint, desiredDirection, 0.5f);
         }
     }
 
@@ -162,8 +207,8 @@ public class NPCGizmoGenerator : MonoBehaviour
         Vector3 perpendicular = Vector3.Cross(normalizedDir, Vector3.up).normalized * (size * 0.5f);
         
         // Draw arrow wings
-        Gizmos.DrawLine(tip, basePoint + perpendicular);
-        Gizmos.DrawLine(tip, basePoint - perpendicular);
-        Gizmos.DrawLine(basePoint + perpendicular, basePoint - perpendicular);
+        Gizmos.DrawLine(tip + offset, basePoint + perpendicular + offset);
+        Gizmos.DrawLine(tip + offset, basePoint - perpendicular + offset);
+        Gizmos.DrawLine(basePoint + perpendicular + offset, basePoint - perpendicular + offset);
     }
 }

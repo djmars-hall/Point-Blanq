@@ -36,6 +36,14 @@ public class NPCController : BaseCharController
 
     // Spatial grid tracking
     private Vector2Int currentCell;
+    
+    // Previous corner position for zone orientation
+    private Vector3 previousCornerPosition;
+    public Vector3 PreviousCornerPosition => previousCornerPosition;
+
+    [Header("Path Corner Settings")]
+    [SerializeField] private Vector2 cornerZoneSize = new Vector2(3f, 0.5f); // Width (perpendicular) and Depth (along path) of corner visitation zone
+    public Vector2 CornerZoneSize => cornerZoneSize;
 
     [Header("Character Avoidance Settings")]
     [SerializeField] private float characterBARRIER = 0.9f; // Strength of character heuristic when any contridicting characters are zeroed out (except edge)
@@ -109,6 +117,9 @@ public class NPCController : BaseCharController
 
             // Adjust corners to maintain distance from NavMesh edges
             pathCorners = AdjustCornersAwayFromEdges(pathCorners);
+
+            // Initialize previous corner position to NPC's current position
+            previousCornerPosition = transform.position;
 
             waypoint_time = Random.Range(3.0f, 12.0f);
             microState = NPCStatesMicro.Walking;
@@ -223,9 +234,11 @@ public class NPCController : BaseCharController
             return;
         }
 
-        //check if close enough to corner to move on to next corner
-        if (Vector3.Distance(pathCorners[0], transform.position) < 0.5f)
+        // Check if NPC is inside the corner visitation zone
+        if (IsInsideCornerZone(0))
         {
+            // Update previous corner position before removing the corner
+            previousCornerPosition = pathCorners[0];
             pathCorners.RemoveAt(0);
             //check if at end of pathway AGAIN
             if (pathCorners.Count == 0)
@@ -246,12 +259,14 @@ public class NPCController : BaseCharController
             if (distToNext < distToCurrent)
             {
                 // Skip the current corner since we're already closer to the next one
+                previousCornerPosition = pathCorners[0];
                 pathCorners.RemoveAt(0);
             }
             else if(distToNext < distFromCurrentToNext)
             {
                 // Skip the current corner since we're on our way to the next one
                 UnityEngine.Debug.Log("This could cause NPCs to walk through walls if not careful!");
+                previousCornerPosition = pathCorners[0];
                 pathCorners.RemoveAt(0);
             }
         }
@@ -328,6 +343,51 @@ public class NPCController : BaseCharController
     }
 
     /// <summary>
+    /// Checks if the NPC is inside the perpendicular zone around a corner.
+    /// The zone is oriented perpendicular to the path direction (from previous corner to this corner).
+    /// </summary>
+    /// <param name="cornerIndex">Index of the corner to check</param>
+    /// <returns>True if the NPC is inside the corner's visitation zone</returns>
+    private bool IsInsideCornerZone(int cornerIndex)
+    {
+        if (cornerIndex >= pathCorners.Count)
+            return false;
+
+        Vector3 cornerPosition = pathCorners[cornerIndex];
+        Vector3 npcPosition = transform.position;
+
+        // Flatten positions to XZ plane
+        cornerPosition.y = 0;
+        npcPosition.y = 0;
+
+        // Calculate the direction from previous corner position to this corner
+        Vector3 prevCorner = previousCornerPosition;
+        prevCorner.y = 0;
+        Vector3 pathDirection = (cornerPosition - prevCorner).normalized;
+
+        // Calculate local position of NPC relative to corner
+        Vector3 toNPC = npcPosition - cornerPosition;
+
+        // Calculate perpendicular direction (left/right of path)
+        Vector3 perpendicular = Vector3.Cross(pathDirection, Vector3.up).normalized;
+
+        // Project NPC position onto path direction and perpendicular
+        float alongPath = Vector3.Dot(toNPC, pathDirection);
+        float acrossPath = Vector3.Dot(toNPC, perpendicular);
+
+        // Check if within zone bounds
+        // alongPath: distance along the path direction (depth of zone)
+        // acrossPath: distance perpendicular to path (width of zone)
+        float halfDepth = cornerZoneSize.y * 0.5f;
+        float halfWidth = cornerZoneSize.x * 0.5f;
+
+        bool withinDepth = Mathf.Abs(alongPath) <= halfDepth;
+        bool withinWidth = Mathf.Abs(acrossPath) <= halfWidth;
+
+        return withinDepth && withinWidth;
+    }
+
+    /// <summary>
     /// If any heuristic is too strong this function nullifies any (except edge--its too high priority) heuristic that contradicts it
     /// </summary>
     /// <param name="normalizedTargetHeuristic"></param>
@@ -369,10 +429,9 @@ public class NPCController : BaseCharController
         return closestPerp * heuristicToModify.magnitude;
     }
 
-
     /// <summary>
     /// Calculates the corner heuristic vector pointing toward the next path corner.
-    /// /// </summary>
+    /// </summary>
     /// <returns>The corner Heuristic</returns>
     private Vector3 GetCornerHeuristic()
     {
@@ -396,10 +455,10 @@ public class NPCController : BaseCharController
         return baseCornerDirection * cornerStrengthMultiplier;
     }
 
-
     /// <summary>
     /// Calculates individual avoidance vectors from nearby characters (both NPCs and Players).
     /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential character avoidance vectors.
+    /// Only considers characters that are in front of or beside the NPC (not behind).
     /// </summary>
     /// <returns>A list of the most influential character avoidance vectors, limited to maxTrackedCharacters</returns>
     private List<Vector3> GetCharacterHeuristics()
@@ -415,15 +474,34 @@ public class NPCController : BaseCharController
             {
                 if (otherCharacter == null || otherCharacter == this) continue;
 
-                float distance = Vector3.Distance(transform.position, otherCharacter.transform.position);
+                Vector3 toOther = otherCharacter.transform.position - transform.position;
+                float distance = toOther.magnitude;
 
                 // Only avoid characters within the avoidance radius
                 if (distance < avoidanceRadius && distance > 0.1f)
                 {
+                    // Calculate the dot product to determine if the character is in front/beside or behind
+                    // Flatten to XZ plane for 2D forward check
+                    Vector3 forwardFlat = transform.forward;
+                    forwardFlat.y = 0;
+                    forwardFlat.Normalize();
+                    
+                    Vector3 toOtherFlat = toOther;
+                    toOtherFlat.y = 0;
+                    toOtherFlat.Normalize();
+                    
+                    float dotProduct = Vector3.Dot(forwardFlat, toOtherFlat);
+                    
+                    // Filter out characters that are behind us (dot product < -0.3 means roughly behind)
+                    // This allows characters directly to the side (dot ~= 0) and in front (dot > 0)
+                    if (dotProduct < -0.3f)
+                    {
+                        continue; // Skip characters that are behind us
+                    }
+
                     // Calculate direction away from the other character
-                    Vector3 awayFromCharacter = (transform.position - otherCharacter.transform.position);
+                    Vector3 awayFromCharacter = -toOther.normalized;
                     awayFromCharacter.y = 0; // Keep avoidance on horizontal plane
-                    awayFromCharacter = awayFromCharacter.normalized;
 
                     // Calculate influence using the custom curve
                     // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
@@ -449,7 +527,6 @@ public class NPCController : BaseCharController
         UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
         return new List<Vector3>();
     }
-
 
     /// <summary>
     /// Calculates an avoidance vector away from the closest NavMesh edge.
@@ -541,9 +618,7 @@ public class NPCController : BaseCharController
 
     void FixedUpdate()
     {
-
         if (!IsOwner) { return; }
-
 
         // Update spatial grid cell if changed
         if (SpatialGrid.Instance != null)
@@ -562,17 +637,13 @@ public class NPCController : BaseCharController
         switch (microState)
         {
             case NPCStatesMicro.Standing:
-
-
                 waypoint_time -= Time.fixedDeltaTime;
                 if (waypoint_time <= 0.0f)
                 {
                     NewWaypoint();
                 }
-
                 break;
             case NPCStatesMicro.Walking:
-
                 DecideMovement();
 
 
@@ -636,17 +707,6 @@ public class NPCController : BaseCharController
             }
         }
     }
-    
-    /*
-    [Rpc(SendTo.NotMe)]
-    void newWaypointRpc(Vector3 cw, float wt)
-    {
-        waypoint_time = wt;
-        current_waypoint = cw;
-        //navMeshAgent.SetDestination(current_waypoint);
-        microState = NPCStatesMicro.Walking;
-    }
-    */
 
     // TODO -> Run this upon npc death or removal
     private void UnregisterFromGrid()
@@ -657,7 +717,6 @@ public class NPCController : BaseCharController
             SpatialGrid.Instance.UnregisterCharacter(this, currentCell);
         }
     }
-
 
     /// <summary>
     /// FOR DEBUG PURPOSES ONLY: Spawns a marker at the given position with order and label info.
@@ -673,5 +732,4 @@ public class NPCController : BaseCharController
         //cube.transform.position = spawnPos;
         //cube.name = order + label;
     }
-
 }

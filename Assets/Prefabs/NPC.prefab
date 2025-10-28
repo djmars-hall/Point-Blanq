@@ -397,6 +397,8 @@ MonoBehaviour:
   meshes:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
+  cornerZoneSize: {x: 3.5, y: 0.5}
+  characterBARRIER: 0.9
   avoidanceRadius: 3
   characterAvoidanceWeight: 0.5
   minMoveSpeed: 0.4
@@ -493,6 +495,7 @@ MonoBehaviour:
   showPaths: 1
   gizmoColor: {r: 1, g: 0, b: 1, a: 1}
   gizmoRadius: 0.4
+  cornerZoneColor: {r: 1, g: 0, b: 1, a: 0.3}
   showHeuristics: 1
   cornerHeuristicColor: {r: 0, g: 1, b: 0, a: 1}
   edgeHeuristicColor: {r: 1, g: 0, b: 1, a: 1}

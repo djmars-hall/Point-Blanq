@@ -10,7 +10,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     [SerializeField] private bool showPaths = true;
     [SerializeField] private Color gizmoColor = Color.magenta;
     [SerializeField] private float gizmoRadius = 0.4f;
-    [SerializeField] private Vector2 rectangleSize = new Vector2(2f, 0.5f); // Width and Height of corner rectangles
+    [SerializeField] private Color cornerZoneColor = new Color(1f, 0f, 1f, 0.3f); // Semi-transparent magenta for zones
     private List<Vector3> pathCorners;
 
     private Vector3 offset = new Vector3(0, 1.2f, 0);
@@ -64,26 +64,20 @@ public class NPCGizmoGenerator : MonoBehaviour
         if (pathCorners == null || pathCorners.Count == 0) return;
         Gizmos.color = gizmoColor;
 
+        // Get the previous corner position from the controller
+        Vector3 previousCornerPosition = npcController.PreviousCornerPosition;
+
         // Draw spheres at each corner and lines between them
         for (int i = 0; i < pathCorners.Count; i++)
         {
             Vector3 cornerPosition = pathCorners[i] + offset;
             
-            // Calculate the direction from the previous point to this corner
-            Vector3 directionToPrevious;
-            if (i == 0)
-            {
-                // First corner: use direction from NPC position to first corner
-                directionToPrevious = (pathCorners[0] - transform.position).normalized;
-            }
-            else
-            {
-                // Other corners: use direction from previous corner to this corner
-                directionToPrevious = (pathCorners[i] - pathCorners[i - 1]).normalized;
-            }
+            // Calculate the direction from the previous corner position to this corner
+            Vector3 prevCorner = (i == 0) ? previousCornerPosition : pathCorners[i - 1];
+            Vector3 directionToPrevious = (cornerPosition - (prevCorner + offset)).normalized;
             
-            // Draw rectangle perpendicular to the incoming direction
-            DrawPerpendicularRectangle(cornerPosition, directionToPrevious, rectangleSize);
+            // Draw corner visitation zone
+            DrawCornerZone(i, cornerPosition, directionToPrevious);
             
             // Draw line to next corner
             if (i < pathCorners.Count - 1)
@@ -98,30 +92,38 @@ public class NPCGizmoGenerator : MonoBehaviour
     }
 
     /// <summary>
-    /// Draws a rectangle at the given position, perpendicular to the given direction
+    /// Draws the corner visitation zone as a semi-transparent box using the zone size from NPCController
     /// </summary>
-    /// <param name="position">Center position of the rectangle</param>
-    /// <param name="direction">Direction that the rectangle should be perpendicular to</param>
-    /// <param name="size">Size of the rectangle (x = width, y = height)</param>
-    private void DrawPerpendicularRectangle(Vector3 position, Vector3 direction, Vector2 size)
+    /// <param name="cornerIndex">Index of the corner</param>
+    /// <param name="position">Center position of the zone</param>
+    /// <param name="direction">Direction perpendicular to the zone</param>
+    private void DrawCornerZone(int cornerIndex, Vector3 position, Vector3 direction)
     {
+        // Get the zone size from the NPC controller to match the actual collision zone
+        Vector2 zoneSize = npcController.CornerZoneSize;
+        
         // Flatten direction to XZ plane
         direction.y = 0;
         direction.Normalize();
         
-        // Calculate the rotation to make the rectangle perpendicular to the direction
-        // The rectangle's forward should point in the direction of travel
+        // Calculate the rotation to make the zone perpendicular to the direction
         Quaternion rotation = Quaternion.LookRotation(direction, Vector3.up);
         
-        // Create the rectangle dimensions (thin in the Z direction)
-        Vector3 cubeSize = new Vector3(size.x, size.y, 0.1f);
+        // Create the zone dimensions
+        // zoneSize.x = width (perpendicular to path), zoneSize.y = depth (along path)
+        Vector3 boxSize = new Vector3(zoneSize.x, 0.5f, zoneSize.y);
         
-        // Draw the rotated cube
+        // Draw the semi-transparent zone
+        Color previousColor = Gizmos.color;
+        Gizmos.color = cornerZoneColor;
+        
         Matrix4x4 oldMatrix = Gizmos.matrix;
         Gizmos.matrix = Matrix4x4.TRS(position, rotation, Vector3.one);
-        Gizmos.DrawCube(Vector3.zero, cubeSize);
-        Gizmos.DrawWireCube(Vector3.zero, cubeSize);
+        Gizmos.DrawCube(Vector3.zero, boxSize);
+        Gizmos.DrawWireCube(Vector3.zero, boxSize);
         Gizmos.matrix = oldMatrix;
+        
+        Gizmos.color = previousColor;
     }
 
     private void DrawHeuristicGizmos()

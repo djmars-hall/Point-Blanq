@@ -109,5 +109,6 @@ public class BountyManager : NetworkBehaviour
                 _player.points += value;
             }
         }
+        if (ScorePanel.inst != null) ScorePanel.inst.UpdateScores();
     }
 }

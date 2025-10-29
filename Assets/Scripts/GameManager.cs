@@ -31,6 +31,7 @@ public class GameManager : NetworkBehaviour
         {
             NetworkState.inst.NotifyHostReadyRpc(NetworkManager.Singleton.LocalClientId);
             if (IsHost) SetupGameForAllPlayers();
+            if (ScorePanel.inst != null) ScorePanel.inst.Initialize();
         }
         else StartGameSolo();
     }

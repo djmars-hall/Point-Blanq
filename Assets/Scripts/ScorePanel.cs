@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections;
 using TMPro;
 using Unity.Netcode;
 using UnityEngine;
@@ -8,7 +9,7 @@ using UnityEngine.UI;
 public class ScorePanel : NetworkBehaviour
 {
 
-    struct ScoreEntry
+    public class ScoreEntry
     {
         public ulong id;
         public float score;
@@ -19,36 +20,50 @@ public class ScorePanel : NetworkBehaviour
     [SerializeField] GameObject visibleArea;
     [SerializeField] RectTransform contentZone;
     [SerializeField] RectTransform originalScoreEntry;
-    Dictionary<ulong, ScoreEntry> scoreEntries;
+    public static Dictionary<ulong, ScoreEntry> scoreEntries;
     bool initialized;
+    [SerializeField] bool resetScores;
+    [SerializeField] bool initializeOnStart;
+    [SerializeField] bool shownWithTab;
 
     private void Awake()
     {
         inst = this;
     }
 
+    private void Start()
+    {
+        if (!initialized && initializeOnStart) Initialize();
+    }
+
     void MakeScoreEntry(ulong id)
     {
-        ScoreEntry entry = new ScoreEntry();
-        entry.id = id;
-        entry.score = 0;
+        ScoreEntry entry;
+        bool entry_exists = scoreEntries.ContainsKey(id);
+        if (entry_exists) {
+            entry = scoreEntries[id];
+            Debug.Log("EntryExists : " + entry.id + "," + entry.score);
+        } else {
+            entry = new ScoreEntry();
+            entry.id = id;
+            entry.score = 0;
+        }
         if (id != NetworkManager.Singleton.LocalClientId) {
             entry.rt = Instantiate(originalScoreEntry);
             entry.text = entry.rt.GetComponent<TMP_Text>();
             entry.text.transform.SetParent(contentZone, false);
-            entry.text.transform.position = Vector3.zero;
-        }
-        else
-        {
+            entry.text.transform.localPosition = Vector3.zero;
+        } else {
             entry.rt = originalScoreEntry;
             entry.text = entry.rt.GetComponent<TMP_Text>();
         }
-        scoreEntries.Add(id, entry);
+        if (!entry_exists) scoreEntries.Add(id, entry);
         PopulateEntry(entry);
     }
 
     void PopulateEntry(ScoreEntry se)
     {
+        if (!se.text) return;
         se.text.text = se.id + " : " + se.score;
     }
 
@@ -60,7 +75,9 @@ public class ScorePanel : NetworkBehaviour
         for (int i = 0; i < keys.Length; i++)
         {
             ulong key = keys[i];
+            if (!scoreEntries[key].rt) continue;
             scoreEntries[key].rt.anchoredPosition = new Vector3(0,(-i*50)-64);
+            Debug.Log("Justified entry id : " + key);
         }
     }
 
@@ -68,7 +85,14 @@ public class ScorePanel : NetworkBehaviour
     {
         if (initialized) return;
         initialized = true;
-        scoreEntries = new Dictionary<ulong, ScoreEntry>();
+        if (resetScores)
+        {
+            scoreEntries = new Dictionary<ulong, ScoreEntry>();
+        }
+        else 
+        {
+            Debug.Log(scoreEntries.ToString());
+        }
         MakeScoreEntry(NetworkManager.Singleton.LocalClientId);
         for (int i = 0; i < NetworkManager.Singleton.ConnectedClientsList.Count; i++)
         {
@@ -99,7 +123,8 @@ public class ScorePanel : NetworkBehaviour
 
     private void Update()
     {
-        visibleArea.SetActive(Keyboard.current.tabKey.IsPressed());
+        if (!initialized) return;
+        if (visibleArea) visibleArea.SetActive(Keyboard.current.tabKey.IsPressed() || !shownWithTab);
     }
 
 }

@@ -2375,6 +2375,9 @@ MonoBehaviour:
   visibleArea: {fileID: 726024432}
   contentZone: {fileID: 1612851232}
   originalScoreEntry: {fileID: 1958349713}
+  resetScores: 1
+  initializeOnStart: 0
+  shownWithTab: 1
 --- !u!1 &349235099
 GameObject:
   m_ObjectHideFlags: 0

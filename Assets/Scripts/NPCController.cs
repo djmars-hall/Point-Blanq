@@ -61,6 +61,19 @@ public class NPCController : BaseCharController
     [SerializeField] private float edgeAvoidanceWeight = 0.6f; // Strength of edge avoidance
     [SerializeField] private AnimationCurve edgeAvoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
 
+    [Header("Spatial Density Settings")]
+    [SerializeField] private int maxDensity = 5; // Reduced from 15 - more realistic maximum for sampled cells
+    [SerializeField] private int minDensity = 0; // Minimum characters (typically 0)
+    [SerializeField] private float densityUpdateInterval = 0.3f; // How often to recalculate density (in seconds)
+    [SerializeField] private int forwardCheckDistance = 2; // How many cells forward to check (in addition to current cell)
+
+    // Cached density values
+    private float localDensity = 0f; // Current density (0-1, where 0 = sparse, 1 = crowded)
+    private float densityUpdateTimer = 0f;
+    
+    // Corridor detection
+    private bool isInCorridor = false; // True when NPC is between two close NavMesh edges (in a corridor)
+
     //Heuristics
     private List<Vector3> characterHeuristics = new List<Vector3>();
     private Vector3 cornerHeuristic;
@@ -72,6 +85,9 @@ public class NPCController : BaseCharController
     public Vector3 CornerHeuristic => cornerHeuristic;
     public Vector3 EdgeHeuristic => edgeHeuristic;
     public Vector3 DesiredDirection => desiredDirection;
+    
+    // Public getter for density visualization
+    public float LocalDensity => localDensity;
 
     private void Start()
     {
@@ -85,6 +101,8 @@ public class NPCController : BaseCharController
             SpatialGrid.Instance.RegisterCharacter(this, currentCell);
         }
 
+        // Initialize local density
+        UpdateLocalDensity();
 
         NewWaypoint();
         waypoint_time = 5.0f;
@@ -287,10 +305,11 @@ public class NPCController : BaseCharController
         }
 
         //If the closest character heuristic is too strong, nullify any heuristic towards character (except for edge)
-        if (characterHeuristics.Count > 0 && characterHeuristics[0].magnitude > characterBARRIER)
-        {
-            DenyOtherHeuristics(characterHeuristics[0].normalized);
-        }
+        //if (characterHeuristics.Count > 0 && characterHeuristics[0].magnitude > characterBARRIER)
+        //{
+        //    DenyOtherHeuristics(characterHeuristics[0].normalized);
+        //}
+        //Isn't working as intended
 
         // Calculate desired direction by blending corner heuristic with weighted character heuristics and edge heuristic
         desiredDirection = cornerHeuristic;
@@ -579,6 +598,7 @@ public class NPCController : BaseCharController
     /// Checks if there is an opposing edge in the direction we want to move away from the closest edge.
     /// This prevents the NPC from getting stuck oscillating between two close edges.
     /// Uses stricter thresholds to only detect true opposing edge situations.
+    /// Also updates the isInCorridor flag.
     /// </summary>
     /// <param name="avoidanceDirection">The direction we want to move away from the closest edge</param>
     /// <param name="closestEdgeDistance">Distance to the closest edge</param>
@@ -608,12 +628,96 @@ public class NPCController : BaseCharController
                 
                 if (alignment < -0.7f) // Stricter threshold to detect truly opposing edges
                 {
+                    isInCorridor = true;
                     return true;
                 }
             }
         }
         
+        isInCorridor = false;
         return false;
+    }
+
+    /// <summary>
+    /// Calculates local density by sampling the current cell and surrounding 8 cells (3x3 grid),
+    /// filtering out cells whose centers are behind the NPC.
+    /// Also checks if NPC is in a corridor (set by HasOpposingEdge): if so, sets density to maximum.
+    /// Returns a value from 0 (sparse/empty) to 1 (crowded/full).
+    /// </summary>
+    private void UpdateLocalDensity()
+    {
+        if (SpatialGrid.Instance == null)
+        {
+            localDensity = 0f;
+            return;
+        }
+
+        // If in a corridor (detected by HasOpposingEdge), set density to maximum
+        if (isInCorridor)
+        {
+            localDensity = 1f;
+            return;
+        }
+
+        // Get forward direction (flatten to XZ plane)
+        Vector3 forward = transform.forward;
+        forward.y = 0;
+        forward.Normalize();
+
+        // --- Normal density calculation ---
+        int totalCharacters = 0;
+        int cellsChecked = 0;
+
+        Vector2Int currentCellCoords = currentCell;
+        
+        // Get cell size from SpatialGrid
+        float cellSize = SpatialGrid.Instance.CellSize;
+
+        // Sample 3x3 grid around current cell
+        for (int x = -1; x <= 1; x++)
+        {
+            for (int z = -1; z <= 1; z++)
+            {
+                Vector2Int checkCell = currentCellCoords + new Vector2Int(x, z);
+                
+                // Calculate the world position of the cell center
+                Vector3 cellCenter = new Vector3(
+                    checkCell.x * cellSize + cellSize * 0.5f,
+                    0,
+                    checkCell.y * cellSize + cellSize * 0.5f
+                );
+
+                // Calculate direction from NPC to cell center
+                Vector3 toCellCenter = cellCenter - transform.position;
+                toCellCenter.y = 0;
+                toCellCenter.Normalize();
+
+                // Check if cell center is in front of or beside the NPC (not behind)
+                float dotProduct = Vector3.Dot(forward, toCellCenter);
+
+                // Skip cells that are behind us (dot product < -0.3 means roughly behind)
+                // For the current cell (0,0), always include it
+                if (x == 0 && z == 0)
+                {
+                    // Always include current cell
+                    int cellPop = SpatialGrid.Instance.GetCellPopulation(checkCell);
+                    totalCharacters += cellPop;
+                    cellsChecked++;
+                }
+                else if (dotProduct >= -0.3f)
+                {
+                    // Include cells that are in front or to the sides
+                    int cellPop = SpatialGrid.Instance.GetCellPopulation(checkCell);
+                    totalCharacters += cellPop;
+                    cellsChecked++;
+                }
+            }
+        }
+
+        float rawDensity = (float)totalCharacters;
+        
+        // Normalize based on max expected density
+        localDensity = Mathf.Clamp01(rawDensity / maxDensity);
     }
 
     void FixedUpdate()
@@ -629,6 +733,14 @@ public class NPCController : BaseCharController
                 SpatialGrid.Instance.UpdateCharacter(this, currentCell, newCell);
                 currentCell = newCell;
             }
+        }
+
+        // Periodically update local density
+        densityUpdateTimer += Time.fixedDeltaTime;
+        if (densityUpdateTimer >= densityUpdateInterval)
+        {
+            UpdateLocalDensity();
+            densityUpdateTimer = 0f;
         }
 
         //this shouldn't have to happen eventually. or maybe only once in a while?

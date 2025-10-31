@@ -28,6 +28,13 @@ public class NPCGizmoGenerator : MonoBehaviour
     [SerializeField] private Color secondCharacterColor = new Color(1f, 0.5f, 0f); // Orange
     [SerializeField] private Color thirdCharacterColor = Color.yellow;
 
+    [Header("Density Visualization")]
+    [SerializeField] private bool showDensityIndicator = true;
+    [SerializeField] private Vector3 densityIndicatorOffset = new Vector3(0, 3f, 0); // Above the NPC
+    [SerializeField] private float densityBarWidth = 4f; // Maximum berth size (when sparse/green)
+    [SerializeField] private float densityBarHeight = 0.5f;
+    [SerializeField] private Color sparseDensityColor = Color.green; // Low density = large berth needed
+    [SerializeField] private Color crowdedDensityColor = Color.red; // High density = small berth (can be close)
 
     private NPCController npcController;
 
@@ -41,6 +48,8 @@ public class NPCGizmoGenerator : MonoBehaviour
         if (showONLYWhenSelected) return;
         DrawPathGizmos();
         DrawHeuristicGizmos();
+        DrawAvoidanceRadiusGizmo();
+        DrawDensityIndicator();
     }
 
     private void OnDrawGizmosSelected()
@@ -48,6 +57,8 @@ public class NPCGizmoGenerator : MonoBehaviour
         if (!showONLYWhenSelected) return;
         DrawPathGizmos();
         DrawHeuristicGizmos();
+        DrawAvoidanceRadiusGizmo();
+        DrawDensityIndicator();
     }
 
     private void DrawPathGizmos()
@@ -107,7 +118,8 @@ public class NPCGizmoGenerator : MonoBehaviour
         direction.Normalize();
         
         // Calculate the rotation to make the zone perpendicular to the direction
-        Quaternion rotation = Quaternion.LookRotation(direction, Vector3.up);
+        // Check if direction is valid before creating rotation
+        Quaternion rotation = (direction.sqrMagnitude > 0.001f) ? Quaternion.LookRotation(direction, Vector3.up) : Quaternion.identity;
         
         // Create the zone dimensions
         // zoneSize.x = width (perpendicular to path), zoneSize.y = depth (along path)
@@ -196,6 +208,69 @@ public class NPCGizmoGenerator : MonoBehaviour
             Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
             DrawArrowHead(endPoint, desiredDirection, 0.5f);
         }
+    }
+
+    private void DrawAvoidanceRadiusGizmo()
+    {
+        // Implementation for drawing avoidance radius gizmo can be added here
+    }
+
+    /// <summary>
+    /// Draws a border around the bar
+    /// </summary>
+    private void DrawBarBorder(Vector3 center, float width, float height)
+    {
+        float halfWidth = width * 0.5f;
+        float halfHeight = height * 0.5f;
+
+        Vector3 topLeft = center + new Vector3(-halfWidth, halfHeight, 0);
+        Vector3 topRight = center + new Vector3(halfWidth, halfHeight, 0);
+        Vector3 bottomLeft = center + new Vector3(-halfWidth, -halfHeight, 0);
+        Vector3 bottomRight = center + new Vector3(halfWidth, -halfHeight, 0);
+
+        Gizmos.DrawLine(topLeft, topRight);
+        Gizmos.DrawLine(topRight, bottomRight);
+        Gizmos.DrawLine(bottomRight, bottomLeft);
+        Gizmos.DrawLine(bottomLeft, topLeft);
+    }
+
+    /// <summary>
+    /// Draws a bar indicator showing the local density (crowdedness) of the area
+    /// </summary>
+    private void DrawDensityIndicator()
+    {
+        if (!showDensityIndicator) return;
+        if (npcController == null) return;
+        
+        // Don't draw if NPC is in standing mode
+        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
+
+        float density = npcController.LocalDensity;
+        Vector3 barCenter = transform.position + densityIndicatorOffset;
+
+        // INVERTED: Size represents avoidance berth (personal space needed)
+        // High density (1.0) = small berth needed (can be close) = small bar
+        // Low density (0.0) = large berth needed (need space) = large bar
+        float invertedDensity = 1f - density;
+        
+        float minBarSize = 0.5f; // Minimum bar size when crowded (high density)
+        float actualBarWidth = Mathf.Lerp(minBarSize, densityBarWidth, invertedDensity);
+
+        // Color based on density (inverted from size)
+        // High density (crowded) = red (small bar, can be close)
+        // Low density (sparse) = green (large bar, need space)
+        Color fillColor = Color.Lerp(crowdedDensityColor, sparseDensityColor, invertedDensity);
+        Gizmos.color = fillColor;
+        
+        // Draw the bar completely filled at the scaled width
+        Matrix4x4 oldMatrix = Gizmos.matrix;
+        Gizmos.matrix = Matrix4x4.TRS(barCenter, Quaternion.identity, new Vector3(actualBarWidth, densityBarHeight, 0.1f));
+        Gizmos.DrawCube(Vector3.zero, Vector3.one);
+        Gizmos.matrix = oldMatrix;
+
+        // Draw border around the actual bar size
+        Gizmos.color = Color.white;
+        DrawBarBorder(barCenter, actualBarWidth, densityBarHeight);
     }
 
     private void DrawArrowHead(Vector3 tip, Vector3 direction, float size)

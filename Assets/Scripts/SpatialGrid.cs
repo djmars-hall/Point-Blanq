@@ -27,6 +27,11 @@ public class SpatialGrid : MonoBehaviour
     private int totalCharacters = 0;
     public int TotalCharacters => totalCharacters;
     public int OccupiedCellCount => occupiedCells.Count;
+    
+    /// <summary>
+    /// Gets the size of each cell in the spatial grid.
+    /// </summary>
+    public float CellSize => cellSize;
 
     [Header("Debug UI")]
     [SerializeField] private bool showDebugUI = true;
@@ -168,6 +173,35 @@ public class SpatialGrid : MonoBehaviour
             return charactersInCell.Count;
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Gets the total population of characters across multiple cells.
+    /// </summary>
+    /// <param name="cells">List of cell coordinates to check</param>
+    /// <returns>Total number of characters across all specified cells</returns>
+    public int GetCellsPopulation(List<Vector2Int> cells)
+    {
+        int total = 0;
+        foreach (var cell in cells)
+        {
+            total += GetCellPopulation(cell);
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Gets all characters in a specific cell.
+    /// </summary>
+    /// <param name="cellCoords">The cell coordinates to check</param>
+    /// <returns>List of characters in the cell, or empty list if cell is empty</returns>
+    public List<BaseCharController> GetCharactersInCell(Vector2Int cellCoords)
+    {
+        if (grid.TryGetValue(cellCoords, out var charactersInCell))
+        {
+            return new List<BaseCharController>(charactersInCell);
+        }
+        return new List<BaseCharController>();
     }
 
     private Color GetCellColor(int population)

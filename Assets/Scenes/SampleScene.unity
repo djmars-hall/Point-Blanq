@@ -4420,7 +4420,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
-  timeLeftInMatch: 100
+  timeLeftInMatch: 1000
   players:
   - {fileID: 1800148494}
   - {fileID: 659246451}
@@ -5855,7 +5855,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cellSize: 5
-  drawDebugGizmos: 1
+  drawDebugGizmos: 0
   drawCellBoundaries: 1
   showCellPopulation: 1
   emptyCellColor: {r: 0, g: 1, b: 0, a: 0.39215687}

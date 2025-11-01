@@ -48,7 +48,7 @@ public class NPCController : BaseCharController
     [Header("Character Avoidance Settings")]
     [SerializeField] private float characterBARRIER = 0.9f; // Strength of character heuristic when any contridicting characters are zeroed out (except edge)
     [SerializeField] private float avoidanceRadius = 6f;
-    [SerializeField] private float characterAvoidanceWeight = 0.8f;
+    [SerializeField] private float characterAvoidanceWeight = 4f;
     [SerializeField] private float minMoveSpeed = 0.3f;
     [SerializeField] private float avoidanceSlowdownFactor = 0.5f; // Speed multiplier when avoiding (0 = stop, 1 = full speed)
     [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
@@ -722,6 +722,8 @@ public class NPCController : BaseCharController
 
     void FixedUpdate()
     {
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
         if (!IsOwner) { return; }
 
         // Update spatial grid cell if changed

@@ -21,15 +21,11 @@ public class PlayerController : BaseCharController
 
     public bool isAiming;
 
-    private Rigidbody rigidbody;
-
     // Spatial grid tracking
     private Vector2Int currentCell;
 
     private void Start()
     {
-        rigidbody = GetComponent<Rigidbody>();
-
         if (!IsOwner) return;
 
         // Register with spatial grid
@@ -81,8 +77,8 @@ public class PlayerController : BaseCharController
 
     void FixedUpdate()
     {
-        rigidbody.linearVelocity = Vector3.zero;
-        rigidbody.angularVelocity = Vector3.zero;
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
         if (!GameManager.Instance.ignoreNetwork && !IsOwner) { return; }
 
         // Update spatial grid cell if changed
@@ -100,20 +96,7 @@ public class PlayerController : BaseCharController
         float h = moveDir.x;
         float v = moveDir.y;
 
-        ProcessMovement(v, h, false);
-    }
-    protected void ProcessMovement(float forward_movement, float rotation_dir, bool use_rigidbody = true)
-    {
-        float rot = rotation_dir * Time.deltaTime * speed * rotationSpeed;
-        Vector3 move = new Vector3(0, 0, forward_movement * Time.deltaTime * speed);
-        if (move != Vector3.zero || rot != 0)
-        {
-            Vector3 newPos = transform.position + move.z * transform.forward;
-            rigidbody.MovePosition(newPos);
-            //transform.position = newPos;
-            transform.Rotate(new Vector3(0, rot, 0));
-        }
-        if (!GameManager.Instance.ignoreNetwork) UpdatePositionClientRpc(rigidbody.position, transform.rotation);
+        ProcessMovement(v, h);
     }
 
 

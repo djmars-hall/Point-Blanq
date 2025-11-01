@@ -11,12 +11,20 @@ public class BaseCharController : NetworkBehaviour
 
     public MeshRenderer[] meshes;
 
+    protected Rigidbody rb;
+
+    void Awake()
+    {
+        rb = GetComponent<Rigidbody>();
+    }
+
     void Start()
     {
     }
     void Update()
     {
     }
+
 
     protected void ProcessMovement(float forward_movement, float rotation_dir)
     {
@@ -25,10 +33,10 @@ public class BaseCharController : NetworkBehaviour
         if (move != Vector3.zero || rot != 0)
         {
             Vector3 newPos = transform.position + move.z * transform.forward;
-            transform.position = newPos;
+            rb.MovePosition(newPos);
             transform.Rotate(new Vector3(0, rot, 0));
-            UpdatePositionClientRpc(newPos, transform.rotation);
         }
+        if (!GameManager.Instance.ignoreNetwork) UpdatePositionClientRpc(rb.position, transform.rotation);
     }
 
 

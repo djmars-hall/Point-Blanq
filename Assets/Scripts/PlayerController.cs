@@ -4,7 +4,7 @@ using Unity.Netcode;
 using Unity.VisualScripting;
 using Unity.Services.Matchmaker.Models;
 
-public class PlayerController : BaseCharController
+public class PlayerController : BaseCharController, IObjectPoolable
 {
     public InputActionAsset inputActions;
 
@@ -24,6 +24,14 @@ public class PlayerController : BaseCharController
     // Spatial grid tracking
     private Vector2Int currentCell;
 
+    // Object Pooling
+    public static ObjectPool<PlayerController> objectPool = new ObjectPool<PlayerController>(16);
+    [SerializeField] bool _isPoolable = false;
+    public bool IsPoolable { get { return _isPoolable; } set { _isPoolable = true; } }
+    public bool IsPoolSpawned { get; set; } = false;
+    protected override void Awake() { base.Awake(); if (IsPoolable) objectPool.RegisterSpawnable(this); }
+
+
     private void Start()
     {
         if (!IsOwner) return;
@@ -39,19 +47,6 @@ public class PlayerController : BaseCharController
     void Update()
     {
         if (!IsOwner) { return; }
-
-        
-
-        /*
-        Vector3 move = new Vector3(0, 0, v * Time.deltaTime * speed);
-        if (move != Vector3.zero || rot != 0)
-        {
-            Vector3 newPos = transform.position + move.z * transform.forward;
-            transform.position = newPos;
-            transform.Rotate(new Vector3(0, rot, 0));
-            UpdatePositionClientRpc(newPos, transform.rotation);
-        }
-        */
 
 
         //Aiming
@@ -212,5 +207,4 @@ public class PlayerController : BaseCharController
             SpatialGrid.Instance.UnregisterCharacter(this, currentCell);
         }
     }
-
 }

@@ -70,16 +70,26 @@ public class NPCManager : NetworkBehaviour
         Vector3 randomPos = new Vector3(randomX, -0.46f, randomZ);
 
         //Spawn NPC Object & Replace Material to match player
+        /*
         newNPC = NetworkManager.Singleton.SpawnManager.InstantiateAndSpawn(npcPrefab, 0).GetComponent<NPCController>();
         newNPC.transform.position = randomPos;
+        */
+        newNPC = NPCController.objectPool.Spawn(randomPos,Vector3.zero);
 
         //Instantiate(npcPrefab, randomPos, Quaternion.identity).GetComponent<NPCController>();
 
         //playerMaterial = BountyManager.Instance.playerMaterials[materialIndex];
 
         //Assign Info
-        newNPC.ReplaceMaterialRpc(materialIndex);
-        newNPC.AssignSlotRpc(materialIndex);
+        if (newNPC != null)
+        {
+            newNPC.ReplaceMaterialRpc(materialIndex);
+            newNPC.AssignSlotRpc(materialIndex);
+        }
+        else
+        {
+            Debug.Log(newNPC);
+        }
 
         return newNPC;
     }

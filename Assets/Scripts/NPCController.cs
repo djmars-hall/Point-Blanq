@@ -8,7 +8,7 @@ using UnityEngine.AI;
 using UnityEngine.Splines;
 using static UnityEngine.UI.GridLayoutGroup;
 
-public class NPCController : BaseCharController
+public class NPCController : BaseCharController, IObjectPoolable
 {
 
     public enum NPCStatesMicro
@@ -88,6 +88,14 @@ public class NPCController : BaseCharController
     
     // Public getter for density visualization
     public float LocalDensity => localDensity;
+
+    // Object Pooling
+    public static ObjectPool<NPCController> objectPool = new ObjectPool<NPCController>(128);
+    [SerializeField] bool _isPoolable = false;
+    public bool IsPoolable { get{return _isPoolable;} set{_isPoolable=true;} }
+    public bool IsPoolSpawned { get; set; } = false;
+    protected override void Awake() { base.Awake(); if (IsPoolable) objectPool.RegisterSpawnable(this); }
+
 
     private void Start()
     {

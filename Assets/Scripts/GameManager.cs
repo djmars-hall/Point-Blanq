@@ -119,6 +119,7 @@ public class GameManager : NetworkBehaviour
         Debug.Log("Game has ended!");
         if (!IsHost) return;
         NPCManager.Instance.Cleanup();
-        NetworkManager.Singleton.SceneManager.LoadScene("ResultScene", LoadSceneMode.Single);
+        NetworkAddUser.startOnResultScene = true;
+        NetworkManager.Singleton.SceneManager.LoadScene("LobbyScene", LoadSceneMode.Single);
     }
 }

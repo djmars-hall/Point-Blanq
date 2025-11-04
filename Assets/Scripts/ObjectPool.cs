@@ -35,9 +35,11 @@ public class ObjectPool<T> where T : MonoBehaviour, IObjectPoolable
             Debug.Log("Could not find an object from the pool to spawn!");
             return null;
         }
+        to_spawn.IsPoolSpawned = true;
         to_spawn.gameObject.SetActive(true);
         to_spawn.transform.position = pos;
         to_spawn.transform.eulerAngles = rot;
+        Debug.Log("spawned from pool " + to_spawn);
         return to_spawn;
     }
 
@@ -56,6 +58,7 @@ public class ObjectPool<T> where T : MonoBehaviour, IObjectPoolable
         }
         pool[ind] = obj;
         obj.gameObject.SetActive(false);
+        Debug.Log("Registered at index : " + ind);
         return ind;
     }
 

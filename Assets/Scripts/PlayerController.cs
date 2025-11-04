@@ -29,7 +29,10 @@ public class PlayerController : BaseCharController, IObjectPoolable
     [SerializeField] bool _isPoolable = false;
     public bool IsPoolable { get { return _isPoolable; } set { _isPoolable = true; } }
     public bool IsPoolSpawned { get; set; } = false;
-    protected override void Awake() { base.Awake(); if (IsPoolable) objectPool.RegisterSpawnable(this); }
+    protected override void Awake() {
+        base.Awake();
+        if (IsPoolable) objectPool.RegisterSpawnable(this); 
+    }
 
 
     private void Start()

@@ -461,6 +461,7 @@ MonoBehaviour:
   minDensity: 0
   densityUpdateInterval: 0.3
   forwardCheckDistance: 2
+  _isPoolable: 1
 --- !u!136 &1842469610956331879
 CapsuleCollider:
   m_ObjectHideFlags: 0

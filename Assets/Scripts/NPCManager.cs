@@ -39,6 +39,7 @@ public class NPCManager : NetworkBehaviour
     public void Initialize()
     {
         if (!IsHost) return;
+        Debug.Log(NetworkManager.Singleton.PrefabHandler.ToString());
         gatheringAreas = new GatheringArea[gatheringAreaParent.childCount];
         for (int i = 0; i < gatheringAreaParent.childCount; i++)
         {
@@ -51,6 +52,7 @@ public class NPCManager : NetworkBehaviour
             //Material material = BountyManager.Instance.playerMaterials[i];
             for (int n = 0; n < maxDuplicatesPerPlayer; n++)
             {
+                Debug.Log("spawn : " + n);
                 NPCController newNPC = SpawnNPC(i);
                 //newNPC.GetComponent<NetworkObject>().Spawn();
             }
@@ -74,22 +76,16 @@ public class NPCManager : NetworkBehaviour
         newNPC = NetworkManager.Singleton.SpawnManager.InstantiateAndSpawn(npcPrefab, 0).GetComponent<NPCController>();
         newNPC.transform.position = randomPos;
         */
-        newNPC = NPCController.objectPool.Spawn(randomPos,Vector3.zero);
+        newNPC = NPCController.objectPool.Spawn(randomPos, Vector3.zero);
+        newNPC.NetworkObject.Spawn();
 
         //Instantiate(npcPrefab, randomPos, Quaternion.identity).GetComponent<NPCController>();
 
         //playerMaterial = BountyManager.Instance.playerMaterials[materialIndex];
 
         //Assign Info
-        if (newNPC != null)
-        {
-            newNPC.ReplaceMaterialRpc(materialIndex);
-            newNPC.AssignSlotRpc(materialIndex);
-        }
-        else
-        {
-            Debug.Log(newNPC);
-        }
+        newNPC.ReplaceMaterialRpc(materialIndex);
+        newNPC.AssignSlotRpc(materialIndex);
 
         return newNPC;
     }

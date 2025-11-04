@@ -1,14 +1,14 @@
 using NUnit.Framework;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using Unity.Netcode;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.Splines;
 using static UnityEngine.UI.GridLayoutGroup;
 
-public class NPCController : BaseCharController, IObjectPoolable
+public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefabInstanceHandler
 {
 
     public enum NPCStatesMicro
@@ -94,7 +94,26 @@ public class NPCController : BaseCharController, IObjectPoolable
     [SerializeField] bool _isPoolable = false;
     public bool IsPoolable { get{return _isPoolable;} set{_isPoolable=true;} }
     public bool IsPoolSpawned { get; set; } = false;
-    protected override void Awake() { base.Awake(); if (IsPoolable) objectPool.RegisterSpawnable(this); }
+    protected override void Awake() 
+    { 
+        base.Awake();
+        Debug.Log(NetworkManager.Singleton.PrefabHandler.AddHandler(gameObject, this));
+        if (IsPoolable) objectPool.RegisterSpawnable(this); 
+    }
+    NetworkObject INetworkPrefabInstanceHandler.Instantiate(ulong ownerClientId, Vector3 position, Quaternion rotation)
+    {
+        Debug.Log("INetworkPrefabInstanceHandler.Instantiate has been called!");
+        gameObject.SetActive(true);
+        transform.position = position;
+        transform.rotation = rotation;
+        return NetworkObject;
+    }
+
+    void INetworkPrefabInstanceHandler.Destroy(NetworkObject networkObject)
+    {
+        Debug.Log("INetworkPrefabInstanceHandler.Destroy has been called!");
+        gameObject.SetActive(false);
+    }
 
 
     private void Start()
@@ -854,4 +873,5 @@ public class NPCController : BaseCharController, IObjectPoolable
         //cube.transform.position = spawnPos;
         //cube.name = order + label;
     }
+
 }

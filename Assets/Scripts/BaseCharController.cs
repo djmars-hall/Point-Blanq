@@ -13,18 +13,23 @@ public class BaseCharController : NetworkBehaviour
 
     protected Rigidbody rb;
 
+    // Assertiveness value - set randomly between 1 and 9999 upon spawning
+    protected int assertiveness;
+    public int Assertiveness => assertiveness;
+
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        assertiveness = UnityEngine.Random.Range(1, 10000);
     }
 
     void Start()
     {
     }
+
     void Update()
     {
     }
-
 
     protected void ProcessMovement(float forward_movement, float rotation_dir)
     {

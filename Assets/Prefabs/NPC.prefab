@@ -399,23 +399,22 @@ MonoBehaviour:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
   cornerZoneSize: {x: 3.5, y: 0.5}
-  characterBARRIER: 0.9
-  avoidanceRadius: 3
-  characterAvoidanceWeight: 0.74
+  charAvoidanceRadius: 6
+  charPersonalSpaceRadius: 0.4
   minMoveSpeed: 0.4
   avoidanceSlowdownFactor: 0.5
-  avoidanceInfluenceCurve:
+  charAvoidanceInfluenceCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
       value: 1
-      inSlope: 0
-      outSlope: 0
+      inSlope: -2.3439488
+      outSlope: -2.3439488
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0
+      outWeight: 0.041666668
     - serializedVersion: 3
       time: 1
       value: 0
@@ -429,22 +428,23 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   maxTrackedCharacters: 3
+  yieldDuration: 4
+  yieldBARRIER: 1.1
   edgeBARRIER: 0.7
-  edgeBuffer: 2
+  edgeBuffer: 1.5
   edgeAvoidanceRadius: 3
-  edgeAvoidanceWeight: 0.6
   edgeAvoidanceInfluenceCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
       value: 1
-      inSlope: -3.147384
-      outSlope: -3.147384
+      inSlope: -3.0174017
+      outSlope: -3.0174017
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0.043209877
+      outWeight: 0.038580246
     - serializedVersion: 3
       time: 1
       value: 0
@@ -457,8 +457,8 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  maxDensity: 5
-  minDensity: 0
+  maxDensity: 10
+  minDensity: 1
   densityUpdateInterval: 0.3
   forwardCheckDistance: 2
 --- !u!136 &1842469610956331879

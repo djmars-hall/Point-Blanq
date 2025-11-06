@@ -1,4 +1,4 @@
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -16,6 +16,7 @@ public class NPCController : BaseCharController
         Standing,
         Walking,
         Turning,
+        Yielding,
     }
     enum NPCStatesMacro
     {
@@ -46,45 +47,54 @@ public class NPCController : BaseCharController
     public Vector2 CornerZoneSize => cornerZoneSize;
 
     [Header("Character Avoidance Settings")]
-    [SerializeField] private float characterBARRIER = 0.9f; // Strength of character heuristic when any contridicting characters are zeroed out (except edge)
-    [SerializeField] private float avoidanceRadius = 6f;
-    [SerializeField] private float characterAvoidanceWeight = 4f;
+    [SerializeField] private float charAvoidanceRadius = 6f;
+    [SerializeField] private float charMinPersonalSpaceRadius = 0.4f;
+    [SerializeField] private float charMaxPersonalSpaceRadius = 3f;
     [SerializeField] private float minMoveSpeed = 0.3f;
     [SerializeField] private float avoidanceSlowdownFactor = 0.5f; // Speed multiplier when avoiding (0 = stop, 1 = full speed)
-    [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
-    [SerializeField] private int maxTrackedCharacters = 3;
+    [SerializeField] private AnimationCurve charAvoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
+
+    [Header("Assertiveness Yield Settings")]
+    [SerializeField] private float yieldDuration = 4f; // How long to yield when less assertive
+    [SerializeField] private float yieldBARRIER = 0.7f; // Strength threshold to trigger assertiveness comparison
+    private float yieldTimer = 0f;
+    private BaseCharController closestCharacter = null; // Track the closest character from heuristics
+    public BaseCharController ClosestCharacter => closestCharacter; // Public getter for debugging
 
     [Header("Edge Avoidance Settings")]
     [SerializeField] private float edgeBARRIER = 0.9f; // Strength of edge heuristic when any contridicting edges are zeroed out
     [SerializeField] private float edgeBuffer = 1.2f; // Distance to maintain from NavMesh edges
     [SerializeField] private float edgeAvoidanceRadius = 3f; // How far to check for edges
-    [SerializeField] private float edgeAvoidanceWeight = 0.6f; // Strength of edge avoidance
     [SerializeField] private AnimationCurve edgeAvoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
 
     [Header("Spatial Density Settings")]
-    [SerializeField] private int maxDensity = 5; // Reduced from 15 - more realistic maximum for sampled cells
-    [SerializeField] private int minDensity = 0; // Minimum characters (typically 0)
+    [SerializeField] private int maxDensity = 10;
+    [SerializeField] private int minDensity = 1;
     [SerializeField] private float densityUpdateInterval = 0.3f; // How often to recalculate density (in seconds)
-    [SerializeField] private int forwardCheckDistance = 2; // How many cells forward to check (in addition to current cell)
+    [SerializeField] private int forwardCheckDistance = 1; // How many cells forward to check (in addition to current cell)
 
     // Cached density values
     private float localDensity = 0f; // Current density (0-1, where 0 = sparse, 1 = crowded)
     private float densityUpdateTimer = 0f;
     
+    // Dynamic personal space radius based on density
+    private float charCurrentPersonalSpaceRadius = 0.4f; // Current personal space radius (adjusted by density)
+    public float CharCurrentPersonalSpaceRadius => charCurrentPersonalSpaceRadius; // Public getter for debugging
+    
     // Corridor detection
     private bool isInCorridor = false; // True when NPC is between two close NavMesh edges (in a corridor)
 
     //Heuristics
-    private List<Vector3> characterHeuristics = new List<Vector3>();
+    private Vector3 characterHeuristic; // Single heuristic for the closest character
     private Vector3 cornerHeuristic;
     private Vector3 edgeHeuristic;
-    private Vector3 desiredDirection;
+    private Vector3 desiredMovement;
 
     //Public getters for heuristics for gizmo drawing
-    public List<Vector3> CharacterHeuristics => characterHeuristics;
+    public Vector3 CharacterHeuristic => characterHeuristic; // Changed to single heuristic
     public Vector3 CornerHeuristic => cornerHeuristic;
     public Vector3 EdgeHeuristic => edgeHeuristic;
-    public Vector3 DesiredDirection => desiredDirection;
+    public Vector3 DesiredMovement => desiredMovement;
     
     // Public getter for density visualization
     public float LocalDensity => localDensity;
@@ -293,7 +303,7 @@ public class NPCController : BaseCharController
         cornerHeuristic = GetCornerHeuristic();
             
         //Character Heuristic (NPCs and Players):
-        characterHeuristics = GetCharacterHeuristics();
+        characterHeuristic = GetCharacterHeuristic();
 
         //Edge Heuristic (NavMesh Edges):
         edgeHeuristic = GetEdgeHeuristic();
@@ -304,62 +314,75 @@ public class NPCController : BaseCharController
             DenyOtherHeuristics(edgeHeuristic.normalized);
         }
 
-        //If the closest character heuristic is too strong, nullify any heuristic towards character (except for edge)
-        //if (characterHeuristics.Count > 0 && characterHeuristics[0].magnitude > characterBARRIER)
-        //{
-        //    DenyOtherHeuristics(characterHeuristics[0].normalized);
-        //}
-        //Isn't working as intended
-
-        // Calculate desired direction by blending corner heuristic with weighted character heuristics and edge heuristic
-        desiredDirection = cornerHeuristic;
-        foreach (var characterHeuristic in characterHeuristics)
+        //If the character heuristic is too strong, compare assertiveness and yield
+        if (characterHeuristic.magnitude > yieldBARRIER)
         {
-            desiredDirection += characterHeuristic * characterAvoidanceWeight;
+            //UnityEngine.Debug.Log("Strong Character Heuristic detected, comparing assertiveness.");
+            if (CompareAssertivenessAndYield())
+            {
+                UnityEngine.Debug.Log("NPC Yielding to more assertive character.");
+                return; // Exit early if this NPC is yielding
+            }
         }
-        desiredDirection += edgeHeuristic * edgeAvoidanceWeight;
-        desiredDirection = desiredDirection.normalized;
 
-        // Calculate how aligned the NPC's forward direction is with the desired direction
-        float forwardAlignment = Vector3.Dot(transform.forward, desiredDirection);
+        // Calculate desired movement by blending corner heuristic with character heuristic and edge heuristic
+        // Do NOT normalize - preserve the magnitude to reflect the combined influence strength
+        desiredMovement = cornerHeuristic + characterHeuristic + edgeHeuristic;
+
+        // If desiredMovement is too small, don't move
+        if (desiredMovement.magnitude < 0.01f)
+        {
+            ProcessMovement(0f, 0f);
+            return;
+        }
+
+        // Get the direction (normalized) for rotation calculations
+        Vector3 movementDirection = desiredMovement.normalized;
+
+        // Calculate how aligned the NPC's forward direction is with the desired movement direction
+        float forwardAlignment = Vector3.Dot(transform.forward, movementDirection);
         
         // Calculate the rotation needed (using the right vector to determine turn direction)
-        float rightAlignment = Vector3.Dot(transform.right, desiredDirection);
+        float rightAlignment = Vector3.Dot(transform.right, movementDirection);
 
         // Check if we need to turn around (desired direction is opposite to current facing)
-        bool needsToTurnAround = forwardAlignment < -0.5f; // Threshold for considering it "opposite"
+        bool needsToTurnAround = forwardAlignment < -0.5f;
 
         // Rotation: Turn toward the desired direction
-        // Scale rotation by how far we need to turn (larger misalignment = faster turn)
         float rotationDir = Mathf.Clamp(rightAlignment, -1f, 1f);
 
-        // Speed: Move faster when aligned with desired direction, slower when turning
-        // This creates more natural movement where NPCs slow down to turn
-        float speedMultiplier = Mathf.Clamp01(forwardAlignment);
+        // Speed calculation: Use the magnitude of desiredMovement directly as the PRIMARY driver
+        // The magnitude represents the combined strength/urgency of all heuristics
+        // Expected range: 0 to ~3 (corner≈1 + character avoidance up to ~1 + edge avoidance up to ~1)
+        float rawMagnitude = desiredMovement.magnitude;
+        
+        // Normalize to 0-1 range for speed multiplier
+        // Lower divisor = higher max speed. Adjust this value to tune overall speed
+        float speedMultiplier = Mathf.Clamp01(rawMagnitude);
+        
+        // Apply forward alignment as a MODIFIER, not a multiplier
+        // This reduces speed slightly when turning, but doesn't eliminate the magnitude effect
+        // Range: 0.7 (worst alignment) to 1.0 (perfect alignment)
+        float alignmentModifier = Mathf.Lerp(0.7f, 1f, Mathf.Clamp01(forwardAlignment));
+        speedMultiplier *= alignmentModifier;
         
         // If we need to turn around, stop moving and just rotate
         if (needsToTurnAround)
         {
             speedMultiplier = 0f;
         }
-        else
+        else if (rawMagnitude < 0.3f)
         {
-            // Apply minimum speed so NPC doesn't stop completely when turning
+            // Only apply minimum speed when magnitude is very low (safety net)
+            // This prevents stopping during very weak heuristics
             speedMultiplier = Mathf.Max(speedMultiplier, minMoveSpeed);
-
-            // Apply slowdown when avoiding characters (based on total character heuristic magnitude)
-            float totalCharacterInfluence = 0f;
-            foreach (var characterHeuristic in characterHeuristics)
-            {
-                totalCharacterInfluence += characterHeuristic.magnitude;
-            }
-            float avoidanceIntensity = Mathf.Clamp01(totalCharacterInfluence);
-            speedMultiplier *= Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
         }
 
         // Execute movement with the calculated speed and rotation
         ProcessMovement(speedMultiplier, rotationDir);
     }
+
+    
 
     /// <summary>
     /// Checks if the NPC is inside the perpendicular zone around a corner.
@@ -416,15 +439,9 @@ public class NPCController : BaseCharController
         {
             cornerHeuristic = ReorientHeuristics(normalizedTargetHeuristic, cornerHeuristic);
         }
-        if (characterHeuristics.Count > 0)
+        if (characterHeuristic.magnitude > 0.01f && Vector3.Dot(characterHeuristic.normalized, normalizedTargetHeuristic) < 0)
         {
-            for (int i = 0; i < characterHeuristics.Count; i++)
-            {
-                if (Vector3.Dot(characterHeuristics[i].normalized, normalizedTargetHeuristic) < 0)
-                {
-                    characterHeuristics[i] = ReorientHeuristics(normalizedTargetHeuristic, characterHeuristics[i]);
-                }
-            }
+            characterHeuristic = ReorientHeuristics(normalizedTargetHeuristic, characterHeuristic);
         }
     }
 
@@ -475,15 +492,18 @@ public class NPCController : BaseCharController
     }
 
     /// <summary>
-    /// Calculates individual avoidance vectors from nearby characters (both NPCs and Players).
-    /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential character avoidance vectors.
+    /// Calculates an avoidance vector from the closest nearby character (both NPCs and Players).
+    /// Uses the spatial grid for efficient neighbor queries and returns only the single most influential character avoidance vector.
     /// Only considers characters that are in front of or beside the NPC (not behind).
+    /// Also tracks the closest character for assertiveness comparison.
+    /// Maximum influence occurs at the dynamic charCurrentPersonalSpaceRadius (adjusted by density), falling off to zero at charAvoidanceRadius.
     /// </summary>
-    /// <returns>A list of the most influential character avoidance vectors, limited to maxTrackedCharacters</returns>
-    private List<Vector3> GetCharacterHeuristics()
+    /// <returns>The avoidance vector for the closest character, or Vector3.zero if no characters nearby</returns>
+    private Vector3 GetCharacterHeuristic()
     {
-        // Use dictionaries to track influences for sorting
-        Dictionary<Vector3, float> influenceMap = new Dictionary<Vector3, float>();
+        closestCharacter = null; // Reset closest character
+        float closestInfluence = 0f;
+        Vector3 closestAvoidanceVector = Vector3.zero;
         
         if (SpatialGrid.Instance != null)
         {
@@ -497,7 +517,7 @@ public class NPCController : BaseCharController
                 float distance = toOther.magnitude;
 
                 // Only avoid characters within the avoidance radius
-                if (distance < avoidanceRadius && distance > 0.1f)
+                if (distance < charAvoidanceRadius && distance > 0.1f)
                 {
                     // Calculate the dot product to determine if the character is in front/beside or behind
                     // Flatten to XZ plane for 2D forward check
@@ -522,29 +542,36 @@ public class NPCController : BaseCharController
                     Vector3 awayFromCharacter = -toOther.normalized;
                     awayFromCharacter.y = 0; // Keep avoidance on horizontal plane
 
-                    // Calculate influence using the custom curve
-                    // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
-                    float normalizedDistance = distance / avoidanceRadius;
+                    float influence = 0f;
 
-                    // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
-                    float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
+                    // Use dynamic personal space radius based on local density
+                    if (distance <= charCurrentPersonalSpaceRadius)
+                    {
+                        // Max influence inside personal space
+                        influence = 1f;
+                    }
+                    else
+                    {
+                        // Influence falls off from personal space radius to avoidance radius
+                        float normalizedDistance = (distance - charCurrentPersonalSpaceRadius) / (charAvoidanceRadius - charCurrentPersonalSpaceRadius);
+                        influence = charAvoidanceInfluenceCurve.Evaluate(normalizedDistance);
+                    }
 
-                    // Store the avoidance vector with its influence
-                    Vector3 avoidanceVector = awayFromCharacter * influence;
-                    influenceMap[avoidanceVector] = influence;
+                    // Track only the closest (highest influence) character
+                    if (influence > closestInfluence)
+                    {
+                        closestInfluence = influence;
+                        closestCharacter = otherCharacter;
+                        closestAvoidanceVector = awayFromCharacter * influence;
+                    }
                 }
             }
 
-            // Sort by influence (highest first), take the top N, and extract just the vectors
-            return influenceMap
-                .OrderByDescending(pair => pair.Value)
-                .Take(maxTrackedCharacters)
-                .Select(pair => pair.Key)
-                .ToList();
+            return closestAvoidanceVector;
         }
         
         UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
-        return new List<Vector3>();
+        return Vector3.zero;
     }
 
     /// <summary>
@@ -613,9 +640,9 @@ public class NPCController : BaseCharController
         if (NavMesh.FindClosestEdge(checkPosition, out opposingEdgeHit, NavMesh.AllAreas))
         {
             float opposingDistance = opposingEdgeHit.distance;
-            
-            // Only consider it an opposing edge if it's very close (tighter threshold)
-            if (opposingDistance < edgeBuffer * 0.5f)
+
+            // Only consider it an opposing edge if its within a little more than edgeBuffer BIG ISSUE WITH THIS LINE
+            if (opposingDistance < edgeBuffer * 1.5f)
             {
                 // Check if this edge's normal points back toward us (opposing the avoidance direction)
                 Vector3 opposingNormal = opposingEdgeHit.normal;
@@ -642,6 +669,7 @@ public class NPCController : BaseCharController
     /// Calculates local density by sampling the current cell and surrounding 8 cells (3x3 grid),
     /// filtering out cells whose centers are behind the NPC.
     /// Also checks if NPC is in a corridor (set by HasOpposingEdge): if so, sets density to maximum.
+    /// Updates the dynamic personal space radius based on the calculated density.
     /// Returns a value from 0 (sparse/empty) to 1 (crowded/full).
     /// </summary>
     private void UpdateLocalDensity()
@@ -649,6 +677,7 @@ public class NPCController : BaseCharController
         if (SpatialGrid.Instance == null)
         {
             localDensity = 0f;
+            charCurrentPersonalSpaceRadius = charMaxPersonalSpaceRadius;
             return;
         }
 
@@ -656,6 +685,7 @@ public class NPCController : BaseCharController
         if (isInCorridor)
         {
             localDensity = 1f;
+            charCurrentPersonalSpaceRadius = charMinPersonalSpaceRadius;
             return;
         }
 
@@ -718,6 +748,11 @@ public class NPCController : BaseCharController
         
         // Normalize based on max expected density
         localDensity = Mathf.Clamp01(rawDensity / maxDensity);
+        
+        // Calculate dynamic personal space radius based on density
+        // High density (1.0) = smaller personal space (charMinPersonalSpaceRadius)
+        // Low density (0.0) = larger personal space (charMaxPersonalSpaceRadius)
+        charCurrentPersonalSpaceRadius = Mathf.Lerp(charMaxPersonalSpaceRadius, charMinPersonalSpaceRadius, localDensity);
     }
 
     void FixedUpdate()
@@ -768,6 +803,9 @@ public class NPCController : BaseCharController
                 //}
                 break;
             case NPCStatesMicro.Turning:
+                break;
+            case NPCStatesMicro.Yielding:
+                HandleYielding();
                 break;
 
 
@@ -845,5 +883,61 @@ public class NPCController : BaseCharController
         //cube.transform.localScale = Vector3.one * 0.5f;
         //cube.transform.position = spawnPos;
         //cube.name = order + label;
+    }
+
+    /// <summary>
+    /// Compares assertiveness with the closest NPC. The NPC with lower assertiveness yields (stops for 4 seconds).
+    /// Only NPCs are compared - players are excluded from assertiveness comparison.
+    /// </summary>
+    /// <returns>True if this NPC should yield, false otherwise</returns>
+    private bool CompareAssertivenessAndYield()
+    {
+        // If no closest character or closest character is not an NPC, don't yield
+        if (closestCharacter == null || !(closestCharacter is NPCController))
+        {
+            return false;
+        }
+
+        NPCController otherNPC = closestCharacter as NPCController;
+        UnityEngine.Debug.Log("npc: " + closestCharacter.ToString() + " Assertiveness: " + closestCharacter.Assertiveness);
+
+
+        // Skip if the other NPC is already yielding (don't create a stalemate)
+        if (otherNPC.MicroState == NPCStatesMicro.Yielding)
+        {
+            return false;
+        }
+
+        // Compare assertiveness - lower value yields
+        if (this.Assertiveness < otherNPC.Assertiveness)
+        {
+            // This NPC has lower assertiveness, so it yields
+            microState = NPCStatesMicro.Yielding;
+            yieldTimer = yieldDuration;
+            
+            UnityEngine.Debug.Log($"{this.name} (Assertiveness: {this.Assertiveness}) yielding to {otherNPC.name} (Assertiveness: {otherNPC.Assertiveness})");
+            
+            return true;
+        }
+        UnityEngine.Debug.Log("4");
+        return false;
+    }
+
+    /// <summary>
+    /// Handles the yielding behavior - NPC waits in place for the yield duration.
+    /// </summary>
+    private void HandleYielding()
+    {
+        yieldTimer -= Time.fixedDeltaTime;
+
+        // Check if we should stop yielding
+        if (yieldTimer <= 0f)
+        {
+            microState = NPCStatesMicro.Walking;
+            return;
+        }
+
+        // Don't move while yielding
+        ProcessMovement(0f, 0f);
     }
 }

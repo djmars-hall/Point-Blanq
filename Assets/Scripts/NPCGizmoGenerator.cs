@@ -25,8 +25,6 @@ public class NPCGizmoGenerator : MonoBehaviour
     
     [Header("Character Heuristic Colors")]
     [SerializeField] private Color closestCharacterColor = Color.red;
-    [SerializeField] private Color secondCharacterColor = new Color(1f, 0.5f, 0f); // Orange
-    [SerializeField] private Color thirdCharacterColor = Color.yellow;
 
     [Header("Density Visualization")]
     [SerializeField] private bool showDensityIndicator = true;
@@ -169,44 +167,25 @@ public class NPCGizmoGenerator : MonoBehaviour
             DrawArrowHead(endPoint, edgeHeuristic, smallArrowSize);
         }
 
-        // Draw Individual Character Heuristics
-        List<Vector3> characterHeuristics = npcController.CharacterHeuristics;
-        if (characterHeuristics != null && characterHeuristics.Count > 0)
+        // Draw Character Heuristic (only the closest character)
+        Vector3 characterHeuristic = npcController.CharacterHeuristic;
+        if (characterHeuristic.magnitude > 0.01f)
         {
-            for (int i = 0; i < characterHeuristics.Count; i++)
-            {
-                Vector3 characterHeuristic = characterHeuristics[i];
-                
-                // Assign color based on priority (closest = red, second = orange, third = yellow)
-                Color heuristicColor = i switch
-                {
-                    0 => closestCharacterColor,
-                    1 => secondCharacterColor,
-                    2 => thirdCharacterColor,
-                    _ => Color.white
-                };
-
-                Gizmos.color = heuristicColor;
-
-                // Draw the avoidance vector
-                if (characterHeuristic.magnitude > 0.01f)
-                {
-                    Vector3 endPoint = npcPosition + characterHeuristic * heuristicLineScale;
-                    Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
-                    DrawArrowHead(endPoint, characterHeuristic, smallArrowSize);
-                }
-            }
+            Gizmos.color = closestCharacterColor;
+            Vector3 endPoint = npcPosition + characterHeuristic * heuristicLineScale;
+            Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
+            DrawArrowHead(endPoint, characterHeuristic, smallArrowSize);
         }
 
-        // Draw Desired Direction (final combined heuristic) - Most prominent
-        Vector3 desiredDirection = npcController.DesiredDirection;
-        if (desiredDirection.magnitude > 0.01f)
+        // Draw Desired Movement (final combined heuristic) - Most prominent
+        Vector3 desiredMovement = npcController.DesiredMovement;
+        if (desiredMovement.magnitude > 0.01f)
         {
             Gizmos.color = desiredDirectionColor;
-            Vector3 endPoint = npcPosition + desiredDirection * heuristicLineScale;
+            Vector3 endPoint = npcPosition + desiredMovement * heuristicLineScale;
 
             Gizmos.DrawLine(npcPosition + offset, endPoint + offset);
-            DrawArrowHead(endPoint, desiredDirection, 0.5f);
+            DrawArrowHead(endPoint, desiredMovement, 0.5f);
         }
     }
 

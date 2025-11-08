@@ -13,7 +13,7 @@ public class BaseCharController : NetworkBehaviour
 
     protected Rigidbody rb;
 
-    void Awake()
+    protected virtual void Awake()
     {
         rb = GetComponent<Rigidbody>();
     }

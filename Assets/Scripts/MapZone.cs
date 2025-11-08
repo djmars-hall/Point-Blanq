@@ -14,14 +14,14 @@ public class MapZone : MonoBehaviour
     }
 
     // Predefined color constants for each zone type
-    private readonly Color spawningGizmoColor = new Color(0f, 1f, 0f, 0.3f); // Transparent green
-    private readonly Color spawningWireColor = new Color(0f, 1f, 1f, 0.5f); // Transparent cyan
+    private readonly Color spawningGizmoColor = new Color(1f, 0.5f, 0f, 0.5f); // More visible orange
+    private readonly Color spawningWireColor = new Color(1f, 0f, 1f, 0.8f); // More visible magenta
     
     private readonly Color gatheringGizmoColor = new Color(1f, 0f, 0f, 0.3f); // Transparent red
     private readonly Color gatheringWireColor = new Color(1f, 1f, 0f, 0.5f); // Transparent yellow
     
-    private readonly Color bothGizmoColor = new Color(1f, 0.5f, 0f, 0.3f); // Transparent orange
-    private readonly Color bothWireColor = new Color(1f, 0f, 1f, 0.5f); // Transparent magenta
+    private readonly Color bothGizmoColor = new Color(0f, 1f, 0f, 0.3f); // Transparent green
+    private readonly Color bothWireColor = new Color(0f, 1f, 1f, 0.5f); // Transparent cyan
 
     [Header("Zone Settings")]
     [Tooltip("The type of zone - determines its purpose and visual appearance")]

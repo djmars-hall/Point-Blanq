@@ -41,56 +41,45 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     private Vector3 previousCornerPosition;
     public Vector3 PreviousCornerPosition => previousCornerPosition;
 
+    [Header("Generic NPC Behavior Settings")]
+    [SerializeField] private float npcWalkingSpeed = 1f; // Walking speed of the NPC
+
+
     [Header("Path Corner Settings")]
     [SerializeField] private Vector2 cornerZoneSize = new Vector2(3f, 0.5f); // Width (perpendicular) and Depth (along path) of corner visitation zone
     public Vector2 CornerZoneSize => cornerZoneSize;
 
-    [Header("Character Avoidance Settings")]
-    [SerializeField] private float characterBARRIER = 0.9f; // Strength of character heuristic when any contridicting characters are zeroed out (except edge)
-    [SerializeField] private float avoidanceRadius = 6f;
-    [SerializeField] private float characterAvoidanceWeight = 4f;
-    [SerializeField] private float minMoveSpeed = 0.3f;
-    [SerializeField] private float avoidanceSlowdownFactor = 0.5f; // Speed multiplier when avoiding (0 = stop, 1 = full speed)
-    [SerializeField] private AnimationCurve avoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
-    [SerializeField] private int maxTrackedCharacters = 3;
-
-    [Header("Edge Avoidance Settings")]
-    [SerializeField] private float edgeBARRIER = 0.9f; // Strength of edge heuristic when any contridicting edges are zeroed out
-    [SerializeField] private float edgeBuffer = 1.2f; // Distance to maintain from NavMesh edges
-    [SerializeField] private float edgeAvoidanceRadius = 3f; // How far to check for edges
-    [SerializeField] private float edgeAvoidanceWeight = 0.6f; // Strength of edge avoidance
-    [SerializeField] private AnimationCurve edgeAvoidanceInfluenceCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
-
-    [Header("Spatial Density Settings")]
-    [SerializeField] private int maxDensity = 5; // Reduced from 15 - more realistic maximum for sampled cells
-    [SerializeField] private int minDensity = 0; // Minimum characters (typically 0)
-    [SerializeField] private float densityUpdateInterval = 0.3f; // How often to recalculate density (in seconds)
-    [SerializeField] private int forwardCheckDistance = 2; // How many cells forward to check (in addition to current cell)
-
-    // Cached density values
-    private float localDensity = 0f; // Current density (0-1, where 0 = sparse, 1 = crowded)
-    private float densityUpdateTimer = 0f;
+    [Header("NPC Detection Settings")]
+    [SerializeField] private float detectionRadius = 5f; // Radius of the semicircle detection zone
+    [SerializeField] private float detectionAngle = 270f; // Angle of detection
+    [SerializeField] private bool enableNPCDetection = true; // Toggle detection on/off
     
-    // Corridor detection
-    private bool isInCorridor = false; // True when NPC is between two close NavMesh edges (in a corridor)
-
-    //Heuristics
-    private List<Vector3> characterHeuristics = new List<Vector3>();
-    private Vector3 cornerHeuristic;
-    private Vector3 edgeHeuristic;
-    private Vector3 desiredDirection;
-
-    //Public getters for heuristics for gizmo drawing
-    public List<Vector3> CharacterHeuristics => characterHeuristics;
-    public Vector3 CornerHeuristic => cornerHeuristic;
-    public Vector3 EdgeHeuristic => edgeHeuristic;
-    public Vector3 DesiredDirection => desiredDirection;
+    [Header("NavMesh Edge Detection Settings")]
+    [SerializeField] private bool enableEdgeAvoidance = true; // Toggle edge avoidance on/off
+    [SerializeField] private float edgeDetectionDistance = 1.5f; // Distance to start edge avoidance
+    [SerializeField] private float edgeCheckAheadDistance = 2f; // How far ahead to check for edges
+    [SerializeField] private int maxRaycastAttempts = 24; // Maximum number of raycast attempts (alternating left/right)
+    [SerializeField] private float raycastAngleIncrement = 5f; // Angle increment for each raycast attempt
+    [SerializeField] private float edgeTurnSpeed = 2f; // Speed multiplier when turning away from edges...should I have this?
     
-    // Public getter for density visualization
-    public float LocalDensity => localDensity;
+    // Public getters for edge avoidance settings
+    public bool EnableEdgeAvoidance => enableEdgeAvoidance;
+    public float EdgeDetectionDistance => edgeDetectionDistance;
+    public float EdgeCheckAheadDistance => edgeCheckAheadDistance;
+    public int MaxRaycastAttempts => maxRaycastAttempts;
+    public float RaycastAngleIncrement => raycastAngleIncrement;
+
+    private List<NPCController> detectedNPCs = new List<NPCController>();
+    public List<NPCController> DetectedNPCs => detectedNPCs;
+    public float DetectionRadius => detectionRadius;
+    public float DetectionAngle => detectionAngle;
+
+    private float edgeBuffer = 0.5f; // Minimum distance from NavMesh edges
 
     // Object Pooling
     public static ObjectPool<NPCController> objectPool = new ObjectPool<NPCController>(128);
+
+    [Header("Object Pooling? Fintan?")]
     [SerializeField] bool _isPoolable = false;
     public bool IsPoolable { get{return _isPoolable;} set{_isPoolable=true;} }
     public bool IsPoolSpawned { get; set; } = false;
@@ -115,10 +104,8 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         gameObject.SetActive(false);
     }
 
-
     private void Start()
     {
-
         if (!IsOwner) return;
 
         // Register with spatial grid
@@ -128,44 +115,121 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             SpatialGrid.Instance.RegisterCharacter(this, currentCell);
         }
 
-        // Initialize local density
-        UpdateLocalDensity();
-
         NewWaypoint();
         waypoint_time = 5.0f;
 
     }
 
+    void FixedUpdate()
+    {
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+        if (!IsOwner) { return; }
+
+        // Update spatial grid cell if changed
+        if (SpatialGrid.Instance != null)
+        {
+            Vector2Int newCell = SpatialGrid.Instance.GetCellCoords(transform.position);
+            if (newCell != currentCell)
+            {
+                SpatialGrid.Instance.UpdateCharacter(this, currentCell, newCell);
+                currentCell = newCell;
+            }
+        }
+
+        // Scan for nearby NPCs
+        if (enableNPCDetection)
+        {
+            ScanForNearbyNPCs();
+        }
+
+        UpdatePositionClientRpc(transform.position, transform.rotation);
+
+        switch (microState)
+        {
+            case NPCStatesMicro.Standing:
+                waypoint_time -= Time.fixedDeltaTime;
+                if (waypoint_time <= 0.0f)
+                {
+                    NewWaypoint();
+                }
+                break;
+            case NPCStatesMicro.Walking:
+                DecideMovement();
+                break;
+            case NPCStatesMicro.Turning:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Scans for nearby NPCs within a forward-facing semicircle detection zone.
+    /// Uses the spatial grid for efficient neighbor queries.
+    /// </summary>
+    private void ScanForNearbyNPCs()
+    {
+        detectedNPCs.Clear();
+
+        if (SpatialGrid.Instance == null) return;
+
+        // Get all nearby characters from the spatial grid
+        List<BaseCharController> nearbyCharacters = SpatialGrid.Instance.GetNearbyCharacters(currentCell);
+
+        foreach (var character in nearbyCharacters)
+        {
+            // Skip self
+            if (character == this) continue;
+
+            // Only detect other NPCs
+            NPCController otherNPC = character as NPCController;
+            if (otherNPC == null) continue;
+
+            // Check if within detection radius
+            Vector3 toOther = otherNPC.transform.position - transform.position;
+            float distance = toOther.magnitude;
+
+            if (distance > detectionRadius) continue;
+
+            // Check if within forward-facing semicircle (angle check)
+            // Flatten to XZ plane for 2D angle calculation
+            Vector3 forward = transform.forward;
+            forward.y = 0;
+            forward.Normalize();
+
+            Vector3 directionToOther = toOther;
+            directionToOther.y = 0;
+            directionToOther.Normalize();
+
+            float angle = Vector3.Angle(forward, directionToOther);
+
+            // If within the detection angle (half angle on each side)
+            if (angle <= detectionAngle * 0.5f)
+            {
+                detectedNPCs.Add(otherNPC);
+            }
+        }
+    }
+
     private void NewWaypoint()
     {
+        var zones = NPCManager.Instance.gatheringZones;
+        if (zones == null || zones.Length == 0) return;
 
-        var areas = NPCManager.Instance.gatheringAreas;
-        if (areas == null || areas.Length == 0) return;
+        // Pick a random gathering zone
+        MapZone zone = zones[Random.Range(0, zones.Length)];
 
-        // Pick a random GatheringArea
-        GatheringArea area = areas[Random.Range(0, areas.Length)];
-
-        // Use a random point within the area as the waypoint
-        Vector3 targetPoint = area.GetRandomPointInArea();
-
+        // Use a random point within the zone as the waypoint
+        Vector3 targetPoint = zone.GetRandomPointInArea();
 
         NavMeshHit hit;
         if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
         {
             current_waypoint = hit.position;
-
             NavMeshPath pathReturned = new NavMeshPath();
-
             NavMesh.CalculatePath(transform.position, current_waypoint, NavMesh.AllAreas, pathReturned);
-
             pathCorners = new List<Vector3>(pathReturned.corners);
-
-            // Adjust corners to maintain distance from NavMesh edges
             pathCorners = AdjustCornersAwayFromEdges(pathCorners);
-
-            // Initialize previous corner position to NPC's current position
             previousCornerPosition = transform.position;
-
             waypoint_time = Random.Range(3.0f, 12.0f);
             microState = NPCStatesMicro.Walking;
         }
@@ -270,7 +334,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     private void DecideMovement()
     {
-
         //check if at end of pathway
         if (pathCorners.Count == 0)
         {
@@ -295,6 +358,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         }
 
         // Check if we're closer to the next corner than the current one (corner-cutting optimization)
+        //Should probably make the NPC recalculate their path if they do this... (BUT NOT change their waypoint)
         if (pathCorners.Count > 1)
         {
             float distToCurrent = Vector3.Distance(pathCorners[0], transform.position);
@@ -316,76 +380,134 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             }
         }
 
-        //Corner Heuristic (Pathway Corners)
-        cornerHeuristic = GetCornerHeuristic();
-            
-        //Character Heuristic (NPCs and Players):
-        characterHeuristics = GetCharacterHeuristics();
+        // Calculate rotation direction
+        float rotationDir = 0f;
 
-        //Edge Heuristic (NavMesh Edges):
-        edgeHeuristic = GetEdgeHeuristic();
-
-        //If Edge Heuristic is too strong, nullify any heuristic towards edge
-        if (edgeHeuristic.magnitude > edgeBARRIER)
+        // Check for edge avoidance
+        if (enableEdgeAvoidance)
         {
-            DenyOtherHeuristics(edgeHeuristic.normalized);
-        }
-
-        //If the closest character heuristic is too strong, nullify any heuristic towards character (except for edge)
-        //if (characterHeuristics.Count > 0 && characterHeuristics[0].magnitude > characterBARRIER)
-        //{
-        //    DenyOtherHeuristics(characterHeuristics[0].normalized);
-        //}
-        //Isn't working as intended
-
-        // Calculate desired direction by blending corner heuristic with weighted character heuristics and edge heuristic
-        desiredDirection = cornerHeuristic;
-        foreach (var characterHeuristic in characterHeuristics)
-        {
-            desiredDirection += characterHeuristic * characterAvoidanceWeight;
-        }
-        desiredDirection += edgeHeuristic * edgeAvoidanceWeight;
-        desiredDirection = desiredDirection.normalized;
-
-        // Calculate how aligned the NPC's forward direction is with the desired direction
-        float forwardAlignment = Vector3.Dot(transform.forward, desiredDirection);
-        
-        // Calculate the rotation needed (using the right vector to determine turn direction)
-        float rightAlignment = Vector3.Dot(transform.right, desiredDirection);
-
-        // Check if we need to turn around (desired direction is opposite to current facing)
-        bool needsToTurnAround = forwardAlignment < -0.5f; // Threshold for considering it "opposite"
-
-        // Rotation: Turn toward the desired direction
-        // Scale rotation by how far we need to turn (larger misalignment = faster turn)
-        float rotationDir = Mathf.Clamp(rightAlignment, -1f, 1f);
-
-        // Speed: Move faster when aligned with desired direction, slower when turning
-        // This creates more natural movement where NPCs slow down to turn
-        float speedMultiplier = Mathf.Clamp01(forwardAlignment);
-        
-        // If we need to turn around, stop moving and just rotate
-        if (needsToTurnAround)
-        {
-            speedMultiplier = 0f;
-        }
-        else
-        {
-            // Apply minimum speed so NPC doesn't stop completely when turning
-            speedMultiplier = Mathf.Max(speedMultiplier, minMoveSpeed);
-
-            // Apply slowdown when avoiding characters (based on total character heuristic magnitude)
-            float totalCharacterInfluence = 0f;
-            foreach (var characterHeuristic in characterHeuristics)
+            // Check if there's an edge directly ahead
+            if (IsEdgeAhead())
             {
-                totalCharacterInfluence += characterHeuristic.magnitude;
+                // Find a safe angle to turn to
+                float safeAngle = FindSafeAngleFromEdge();
+                
+                if (safeAngle != 0f)
+                {
+                    // Convert angle to rotation direction for ProcessMovement
+                    rotationDir = Mathf.Sign(safeAngle);
+                    Debug.Log($"[{name}] EDGE DETECTED: Turning {safeAngle}° ({(safeAngle > 0 ? "right" : "left")})");
+                }
             }
-            float avoidanceIntensity = Mathf.Clamp01(totalCharacterInfluence);
-            speedMultiplier *= Mathf.Lerp(1f, avoidanceSlowdownFactor, avoidanceIntensity);
         }
 
-        // Execute movement with the calculated speed and rotation
-        ProcessMovement(speedMultiplier, rotationDir);
+        // Execute movement with the calculated rotation (no forward movement for now)
+        if (rotationDir != 0f)
+        {
+            ProcessMovement(npcWalkingSpeed * 0.75f, rotationDir);
+        }
+        ProcessMovement(npcWalkingSpeed, rotationDir);
+    }
+
+    /// <summary>
+    /// Checks if there is a NavMesh edge directly ahead of the NPC.
+    /// </summary>
+    /// <returns>True if an edge is detected ahead, false otherwise</returns>
+    private bool IsEdgeAhead()
+    {
+        Vector3 forward = transform.forward;
+        forward.y = 0;
+        forward.Normalize();
+
+        Vector3 checkPosition = transform.position + forward * edgeCheckAheadDistance;
+
+        // Check if the position is on the NavMesh
+        NavMeshHit hit;
+        if (!NavMesh.SamplePosition(checkPosition, out hit, edgeCheckAheadDistance * 1.5f, NavMesh.AllAreas))
+        {
+            // Position is off NavMesh - edge detected
+            return true;
+        }
+
+        // Check distance to nearest edge from this position
+        NavMeshHit edgeHit;
+        if (NavMesh.FindClosestEdge(hit.position, out edgeHit, NavMesh.AllAreas))
+        {
+            // Edge detected if too close
+            return edgeHit.distance < edgeDetectionDistance;
+        }
+
+        // No edge detected
+        return false;
+    }
+
+    /// <summary>
+    /// Finds a safe angle to turn away from the edge by alternating left and right radially.
+    /// Starts at 0°, then checks 5°, -5°, 10°, -10°, 15°, -15°, etc.
+    /// Returns immediately upon finding the first safe direction.
+    /// </summary>
+    /// <returns>The safe angle in degrees (positive = right, negative = left), or 0 if none found</returns>
+    private float FindSafeAngleFromEdge()
+    {
+        Vector3 currentForward = transform.forward;
+        currentForward.y = 0;
+        currentForward.Normalize();
+
+        // Start checking at increments of raycastAngleIncrement degrees
+        for (int i = 1; i <= maxRaycastAttempts; i++)
+        {
+            float angle = raycastAngleIncrement * i;
+            
+            // Alternate: try right (positive), then left (negative)
+            // i=1: +5°, i=2: -5°, i=3: +10°, i=4: -10°, etc.
+            float checkAngle = (i % 2 == 1) ? angle : -angle;
+            
+            // Get the direction at this angle
+            Vector3 checkDirection = Quaternion.Euler(0, checkAngle, 0) * currentForward;
+            
+            // Check if this direction is safe - return immediately if found
+            if (IsDirectionSafe(checkDirection))
+            {
+                Debug.Log($"[{name}] Found safe direction at {checkAngle}° ({(checkAngle > 0 ? "right" : "left")}) after {i} attempts");
+                return checkAngle;
+            }
+        }
+
+        // No safe direction found after all attempts
+        Debug.LogWarning($"[{name}] No safe direction found after {maxRaycastAttempts} attempts");
+        return 0f;
+    }
+
+    /// <summary>
+    /// Checks if a given direction is safe (no NavMesh edge in that direction).
+    /// </summary>
+    /// <param name="direction">The direction to check (should be normalized)</param>
+    /// <returns>True if the direction is safe, false otherwise</returns>
+    private bool IsDirectionSafe(Vector3 direction)
+    {
+        direction.y = 0;
+        direction.Normalize();
+
+        Vector3 checkPosition = transform.position + direction * edgeCheckAheadDistance;
+
+        // Check if the position is on the NavMesh
+        NavMeshHit hit;
+        if (!NavMesh.SamplePosition(checkPosition, out hit, edgeCheckAheadDistance * 1.5f, NavMesh.AllAreas))
+        {
+            // Position is off NavMesh - not safe
+            return false;
+        }
+
+        // Check distance to nearest edge from this position
+        NavMeshHit edgeHit;
+        if (NavMesh.FindClosestEdge(hit.position, out edgeHit, NavMesh.AllAreas))
+        {
+            // Safe if the edge is far enough away
+            return edgeHit.distance >= edgeDetectionDistance;
+        }
+
+        // If we can't find an edge, assume it's safe
+        return true;
     }
 
     /// <summary>
@@ -431,405 +553,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         bool withinWidth = Mathf.Abs(acrossPath) <= halfWidth;
 
         return withinDepth && withinWidth;
-    }
-
-    /// <summary>
-    /// If any heuristic is too strong this function nullifies any (except edge--its too high priority) heuristic that contradicts it
-    /// </summary>
-    /// <param name="normalizedTargetHeuristic"></param>
-    private void DenyOtherHeuristics(Vector3 normalizedTargetHeuristic)
-    {
-        if (Vector3.Dot(cornerHeuristic.normalized, normalizedTargetHeuristic) < 0)
-        {
-            cornerHeuristic = ReorientHeuristics(normalizedTargetHeuristic, cornerHeuristic);
-        }
-        if (characterHeuristics.Count > 0)
-        {
-            for (int i = 0; i < characterHeuristics.Count; i++)
-            {
-                if (Vector3.Dot(characterHeuristics[i].normalized, normalizedTargetHeuristic) < 0)
-                {
-                    characterHeuristics[i] = ReorientHeuristics(normalizedTargetHeuristic, characterHeuristics[i]);
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Reorients a heuristic to be perpendicular to a target heuristic
-    /// </summary>
-    /// <param name="normalizedTargetHeuristic"></param>
-    /// <param name="heuristicToModify"></param>
-    /// <returns>The Vector3 of the reoriented Heuristic</returns>
-    private Vector3 ReorientHeuristics(Vector3 normalizedTargetHeuristic, Vector3 heuristicToModify)
-    {
-        // Calculate both perpendiculars to the target heuristic
-        Vector3 perp1 = Vector3.Cross(normalizedTargetHeuristic, Vector3.up).normalized;
-        Vector3 perp2 = -perp1;
-
-        // Choose the perpendicular closest to the original heuristic direction
-        float dot1 = Vector3.Dot(heuristicToModify.normalized, perp1);
-        float dot2 = Vector3.Dot(heuristicToModify.normalized, perp2);
-
-        Vector3 closestPerp = (dot1 > dot2) ? perp1 : perp2;
-        return closestPerp * heuristicToModify.magnitude;
-    }
-
-    /// <summary>
-    /// Calculates the corner heuristic vector pointing toward the next path corner.
-    /// </summary>
-    /// <returns>The corner Heuristic</returns>
-    private Vector3 GetCornerHeuristic()
-    {
-        // Calculate distance to next corner
-        float distanceToCorner = Vector3.Distance(pathCorners[0], transform.position);
-
-        // Next corner direction with distance-based strength reduction
-        Vector3 baseCornerDirection = (pathCorners[0] - transform.position);
-        baseCornerDirection.y = 0; // Keep movement on horizontal plane
-        baseCornerDirection = baseCornerDirection.normalized;
-
-        // Reduce corner strength when close to destination (within 3 units)
-        float cornerStrengthMultiplier = 1f;
-        float arrivalSlowdownDistance = 3f;
-        if (distanceToCorner < arrivalSlowdownDistance)
-        {
-            // Smoothly reduce from 1.0 to 0.7 as we get closer (much less aggressive)
-            cornerStrengthMultiplier = Mathf.Lerp(0.7f, 1f, distanceToCorner / arrivalSlowdownDistance);
-        }
-
-        return baseCornerDirection * cornerStrengthMultiplier;
-    }
-
-    /// <summary>
-    /// Calculates individual avoidance vectors from nearby characters (both NPCs and Players).
-    /// Uses the spatial grid for efficient neighbor queries and returns the top N most influential character avoidance vectors.
-    /// Only considers characters that are in front of or beside the NPC (not behind).
-    /// </summary>
-    /// <returns>A list of the most influential character avoidance vectors, limited to maxTrackedCharacters</returns>
-    private List<Vector3> GetCharacterHeuristics()
-    {
-        // Use dictionaries to track influences for sorting
-        Dictionary<Vector3, float> influenceMap = new Dictionary<Vector3, float>();
-        
-        if (SpatialGrid.Instance != null)
-        {
-            List<BaseCharController> nearbyCharacters = SpatialGrid.Instance.GetNearbyCharacters(currentCell);
-
-            foreach (var otherCharacter in nearbyCharacters)
-            {
-                if (otherCharacter == null || otherCharacter == this) continue;
-
-                Vector3 toOther = otherCharacter.transform.position - transform.position;
-                float distance = toOther.magnitude;
-
-                // Only avoid characters within the avoidance radius
-                if (distance < avoidanceRadius && distance > 0.1f)
-                {
-                    // Calculate the dot product to determine if the character is in front/beside or behind
-                    // Flatten to XZ plane for 2D forward check
-                    Vector3 forwardFlat = transform.forward;
-                    forwardFlat.y = 0;
-                    forwardFlat.Normalize();
-                    
-                    Vector3 toOtherFlat = toOther;
-                    toOtherFlat.y = 0;
-                    toOtherFlat.Normalize();
-                    
-                    float dotProduct = Vector3.Dot(forwardFlat, toOtherFlat);
-                    
-                    // Filter out characters that are behind us (dot product < -0.3 means roughly behind)
-                    // This allows characters directly to the side (dot ~= 0) and in front (dot > 0)
-                    if (dotProduct < -0.3f)
-                    {
-                        continue; // Skip characters that are behind us
-                    }
-
-                    // Calculate direction away from the other character
-                    Vector3 awayFromCharacter = -toOther.normalized;
-                    awayFromCharacter.y = 0; // Keep avoidance on horizontal plane
-
-                    // Calculate influence using the custom curve
-                    // Normalize distance to 0-1 range (0 = at same position, 1 = at avoidanceRadius)
-                    float normalizedDistance = distance / avoidanceRadius;
-
-                    // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
-                    float influence = avoidanceInfluenceCurve.Evaluate(normalizedDistance);
-
-                    // Store the avoidance vector with its influence
-                    Vector3 avoidanceVector = awayFromCharacter * influence;
-                    influenceMap[avoidanceVector] = influence;
-                }
-            }
-
-            // Sort by influence (highest first), take the top N, and extract just the vectors
-            return influenceMap
-                .OrderByDescending(pair => pair.Value)
-                .Take(maxTrackedCharacters)
-                .Select(pair => pair.Key)
-                .ToList();
-        }
-        
-        UnityEngine.Debug.LogError("NO SPATIAL GRID INSTANCE");
-        return new List<Vector3>();
-    }
-
-    /// <summary>
-    /// Calculates an avoidance vector away from the closest NavMesh edge.
-    /// Returns a vector pointing away from the edge with magnitude based on distance.
-    /// Checks for opposing edges to prevent getting stuck between two edges.
-    /// </summary>
-    /// <returns>Edge avoidance vector, or Vector3.zero if no edge is nearby or caught between edges</returns>
-    private Vector3 GetEdgeHeuristic()
-    {
-        NavMeshHit edgeHit;
-        
-        // Find the closest edge within the avoidance radius
-        if (NavMesh.FindClosestEdge(transform.position, out edgeHit, NavMesh.AllAreas))
-        {
-            float distanceToEdge = edgeHit.distance;
-            
-            // Only apply avoidance if within the edge avoidance radius
-            if (distanceToEdge < edgeAvoidanceRadius && distanceToEdge > 0.1f)
-            {
-                // Direction away from the edge (using the edge normal)
-                Vector3 awayFromEdge = edgeHit.normal;
-                awayFromEdge.y = 0; // Keep avoidance on horizontal plane
-                awayFromEdge = awayFromEdge.normalized;
-                
-                // Calculate influence using the custom curve
-                // Normalize distance to 0-1 range (0 = at edge, 1 = at edgeAvoidanceRadius)
-                float normalizedDistance = distanceToEdge / edgeAvoidanceRadius;
-                
-                // Evaluate the curve (curve should go from 1 at x=0 to 0 at x=1)
-                float influence = edgeAvoidanceInfluenceCurve.Evaluate(normalizedDistance);
-                
-                Vector3 edgeAvoidanceVector = awayFromEdge * influence;
-                
-                // Check if there's an opposing edge that would contradict this heuristic
-                // Only nullify if the heuristic is weak AND we're truly trapped
-                if (edgeAvoidanceVector.magnitude < 0.2f && HasOpposingEdge(awayFromEdge, distanceToEdge))
-                {
-                    // Caught between two edges with weak influence, nullify to avoid oscillation
-                    return Vector3.zero;
-                }
-                
-                return edgeAvoidanceVector;
-            }
-        }
-        
-        return Vector3.zero;
-    }
-
-    /// <summary>
-    /// Checks if there is an opposing edge in the direction we want to move away from the closest edge.
-    /// This prevents the NPC from getting stuck oscillating between two close edges.
-    /// Uses stricter thresholds to only detect true opposing edge situations.
-    /// Also updates the isInCorridor flag.
-    /// </summary>
-    /// <param name="avoidanceDirection">The direction we want to move away from the closest edge</param>
-    /// <param name="closestEdgeDistance">Distance to the closest edge</param>
-    /// <returns>True if there's an opposing edge that would contradict the avoidance direction</returns>
-    private bool HasOpposingEdge(Vector3 avoidanceDirection, float closestEdgeDistance)
-    {
-        // Sample a point in the avoidance direction to check for an opposing edge
-        // Use a tighter check radius (half of edgeBuffer)
-        Vector3 checkPosition = transform.position + avoidanceDirection * (edgeBuffer * 0.5f);
-        
-        NavMeshHit opposingEdgeHit;
-        if (NavMesh.FindClosestEdge(checkPosition, out opposingEdgeHit, NavMesh.AllAreas))
-        {
-            float opposingDistance = opposingEdgeHit.distance;
-            
-            // Only consider it an opposing edge if it's very close (tighter threshold)
-            if (opposingDistance < edgeBuffer * 0.5f)
-            {
-                // Check if this edge's normal points back toward us (opposing the avoidance direction)
-                Vector3 opposingNormal = opposingEdgeHit.normal;
-                opposingNormal.y = 0;
-                opposingNormal = opposingNormal.normalized;
-                
-                // If the dot product is negative, the normals point in opposite directions
-                // Use stricter threshold (-0.7) to ensure they're truly opposing
-                float alignment = Vector3.Dot(avoidanceDirection, opposingNormal);
-                
-                if (alignment < -0.7f) // Stricter threshold to detect truly opposing edges
-                {
-                    isInCorridor = true;
-                    return true;
-                }
-            }
-        }
-        
-        isInCorridor = false;
-        return false;
-    }
-
-    /// <summary>
-    /// Calculates local density by sampling the current cell and surrounding 8 cells (3x3 grid),
-    /// filtering out cells whose centers are behind the NPC.
-    /// Also checks if NPC is in a corridor (set by HasOpposingEdge): if so, sets density to maximum.
-    /// Returns a value from 0 (sparse/empty) to 1 (crowded/full).
-    /// </summary>
-    private void UpdateLocalDensity()
-    {
-        if (SpatialGrid.Instance == null)
-        {
-            localDensity = 0f;
-            return;
-        }
-
-        // If in a corridor (detected by HasOpposingEdge), set density to maximum
-        if (isInCorridor)
-        {
-            localDensity = 1f;
-            return;
-        }
-
-        // Get forward direction (flatten to XZ plane)
-        Vector3 forward = transform.forward;
-        forward.y = 0;
-        forward.Normalize();
-
-        // --- Normal density calculation ---
-        int totalCharacters = 0;
-        int cellsChecked = 0;
-
-        Vector2Int currentCellCoords = currentCell;
-        
-        // Get cell size from SpatialGrid
-        float cellSize = SpatialGrid.Instance.CellSize;
-
-        // Sample 3x3 grid around current cell
-        for (int x = -1; x <= 1; x++)
-        {
-            for (int z = -1; z <= 1; z++)
-            {
-                Vector2Int checkCell = currentCellCoords + new Vector2Int(x, z);
-                
-                // Calculate the world position of the cell center
-                Vector3 cellCenter = new Vector3(
-                    checkCell.x * cellSize + cellSize * 0.5f,
-                    0,
-                    checkCell.y * cellSize + cellSize * 0.5f
-                );
-
-                // Calculate direction from NPC to cell center
-                Vector3 toCellCenter = cellCenter - transform.position;
-                toCellCenter.y = 0;
-                toCellCenter.Normalize();
-
-                // Check if cell center is in front of or beside the NPC (not behind)
-                float dotProduct = Vector3.Dot(forward, toCellCenter);
-
-                // Skip cells that are behind us (dot product < -0.3 means roughly behind)
-                // For the current cell (0,0), always include it
-                if (x == 0 && z == 0)
-                {
-                    // Always include current cell
-                    int cellPop = SpatialGrid.Instance.GetCellPopulation(checkCell);
-                    totalCharacters += cellPop;
-                    cellsChecked++;
-                }
-                else if (dotProduct >= -0.3f)
-                {
-                    // Include cells that are in front or to the sides
-                    int cellPop = SpatialGrid.Instance.GetCellPopulation(checkCell);
-                    totalCharacters += cellPop;
-                    cellsChecked++;
-                }
-            }
-        }
-
-        float rawDensity = (float)totalCharacters;
-        
-        // Normalize based on max expected density
-        localDensity = Mathf.Clamp01(rawDensity / maxDensity);
-    }
-
-    void FixedUpdate()
-    {
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
-        if (!IsOwner) { return; }
-
-        // Update spatial grid cell if changed
-        if (SpatialGrid.Instance != null)
-        {
-            Vector2Int newCell = SpatialGrid.Instance.GetCellCoords(transform.position);
-            if (newCell != currentCell)
-            {
-                SpatialGrid.Instance.UpdateCharacter(this, currentCell, newCell);
-                currentCell = newCell;
-            }
-        }
-
-        // Periodically update local density
-        densityUpdateTimer += Time.fixedDeltaTime;
-        if (densityUpdateTimer >= densityUpdateInterval)
-        {
-            UpdateLocalDensity();
-            densityUpdateTimer = 0f;
-        }
-
-        //this shouldn't have to happen eventually. or maybe only once in a while?
-        UpdatePositionClientRpc(transform.position, transform.rotation);
-
-        switch (microState)
-        {
-            case NPCStatesMicro.Standing:
-                waypoint_time -= Time.fixedDeltaTime;
-                if (waypoint_time <= 0.0f)
-                {
-                    NewWaypoint();
-                }
-                break;
-            case NPCStatesMicro.Walking:
-                DecideMovement();
-
-
-                //Conditions to stop Walking:
-                //if (!navMeshAgent.pathPending && navMeshAgent.remainingDistance <= navMeshAgent.stoppingDistance)
-                //{
-                //    microState = NPCStatesMicro.Standing;
-                //}
-                break;
-            case NPCStatesMicro.Turning:
-                break;
-
-
-
-            //case NPCStatesMicro.Standing:
-            //    break;
-            //case NPCStatesMicro.Walking:
-            //    ProcessMovement(1, 0);
-            //    if (Vector3.Distance(transform.position, current_waypoint) < 0.2f)
-            //    {
-            //        microState = NPCStatesMicro.Standing;
-            //    }
-
-            //    break;
-            //case NPCStatesMicro.Turning:
-            //    Vector3 directionToTarget = (current_waypoint - transform.position).normalized;
-            //    Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
-            //    float midpoint_to_target_angle = Mathf.Lerpangle(transform.rotation.eulerAngles.y, targetRotation.eulerAngles.y, 0.5f);
-            //    float midpoint_to_target_angle_diff = midpoint_to_target_angle - transform.rotation.eulerAngles.y;
-            //    float rot_dir = Mathf.Sign(midpoint_to_target_angle_diff);
-            //    ProcessMovement(0, rot_dir);
-            //    if (Mathf.Abs(midpoint_to_target_angle_diff) < Time.deltaTime * speed * rotationSpeed)
-            //    {
-            //        transform.rotation = targetRotation;
-            //        microState = NPCStatesMicro.Walking;
-            //    }
-            //    break;
-        }
-        
-        //waypoint_time -= Time.deltaTime;
-        //if (waypoint_time <= 0.0f)
-        //{
-        //    NewWaypoint();
-        //}
-        
     }
 
     [Rpc(SendTo.Everyone)]

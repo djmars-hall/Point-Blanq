@@ -399,68 +399,6 @@ MonoBehaviour:
   - {fileID: 2462444620933492887}
   - {fileID: 9167811285641215078}
   cornerZoneSize: {x: 3.5, y: 0.5}
-  characterBARRIER: 0.9
-  avoidanceRadius: 3
-  characterAvoidanceWeight: 0.74
-  minMoveSpeed: 0.4
-  avoidanceSlowdownFactor: 0.5
-  avoidanceInfluenceCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  maxTrackedCharacters: 3
-  edgeBARRIER: 0.7
-  edgeBuffer: 2
-  edgeAvoidanceRadius: 3
-  edgeAvoidanceWeight: 0.6
-  edgeAvoidanceInfluenceCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: -3.147384
-      outSlope: -3.147384
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0.043209877
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  maxDensity: 5
-  minDensity: 0
-  densityUpdateInterval: 0.3
-  forwardCheckDistance: 2
 --- !u!136 &1842469610956331879
 CapsuleCollider:
   m_ObjectHideFlags: 0
@@ -496,26 +434,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 262cb74951e10844abeac7704235974d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showONLYWhenSelected: 0
+  onlyShowWhenSelected: 1
   showPaths: 1
   gizmoColor: {r: 1, g: 0, b: 1, a: 1}
   gizmoRadius: 0.4
   cornerZoneColor: {r: 1, g: 0, b: 1, a: 0.3}
-  showHeuristics: 1
-  cornerHeuristicColor: {r: 0, g: 1, b: 0, a: 1}
-  edgeHeuristicColor: {r: 1, g: 0, b: 1, a: 1}
-  desiredDirectionColor: {r: 0, g: 1, b: 1, a: 1}
-  heuristicLineScale: 2
-  smallArrowSize: 0.15
-  closestCharacterColor: {r: 1, g: 0, b: 0, a: 1}
-  secondCharacterColor: {r: 1, g: 0.5, b: 0, a: 1}
-  thirdCharacterColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
-  showDensityIndicator: 1
-  densityIndicatorOffset: {x: 0, y: 3, z: 0}
-  densityBarWidth: 4
-  densityBarHeight: 0.5
-  sparseDensityColor: {r: 0, g: 1, b: 0, a: 1}
-  crowdedDensityColor: {r: 1, g: 0, b: 0, a: 1}
 --- !u!54 &6086016695829236127
 Rigidbody:
   m_ObjectHideFlags: 0

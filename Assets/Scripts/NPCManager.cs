@@ -17,14 +17,13 @@ public class NPCManager : NetworkBehaviour
     public int maxNPCs = 200;
     public int maxDuplicatesPerPlayer = 20;
 
-    public float spawnRadius = 10f;
+    [Header("Zone Lists:")]
+    [SerializeField] private Transform zoneParent;
+    [SerializeField] internal MapZone[] spawningZones;
+    [SerializeField] internal MapZone[] gatheringZones;
 
     [Header("NPC Master List:")]
     public NPCController[] npcList;
-
-    [Header("Gathering Area List:")]
-    [SerializeField] private Transform gatheringAreaParent;
-    [SerializeField] internal GatheringArea[] gatheringAreas;
 
     private void Awake()
     {
@@ -39,45 +38,61 @@ public class NPCManager : NetworkBehaviour
     public void Initialize()
     {
         if (!IsHost) return;
-        gatheringAreas = new GatheringArea[gatheringAreaParent.childCount];
-        for (int i = 0; i < gatheringAreaParent.childCount; i++)
+
+        // Populate zone arrays from children if zoneParent is assigned
+        if (zoneParent != null)
         {
-            gatheringAreas[i] = gatheringAreaParent.GetChild(i).GetComponent<GatheringArea>();
+            MapZone[] allZones = new MapZone[zoneParent.childCount];
+            List<MapZone> spawningList = new List<MapZone>();
+            List<MapZone> gatheringList = new List<MapZone>();
+
+            for (int i = 0; i < zoneParent.childCount; i++)
+            {
+                MapZone zone = zoneParent.GetChild(i).GetComponent<MapZone>();
+                if (zone != null)
+                {
+                    allZones[i] = zone;
+                    if (zone.IsSpawningZone())
+                        spawningList.Add(zone);
+                    if (zone.IsGatheringZone())
+                        gatheringList.Add(zone);
+                }
+            }
+
+            spawningZones = spawningList.ToArray();
+            gatheringZones = gatheringList.ToArray();
         }
+
         npcList = new NPCController[maxNPCs];
         Debug.Log("NPCManager Start call!");
         for (int i = 0; i < BountyManager.Instance.players.Count; i++)
         {
-            //Material material = BountyManager.Instance.playerMaterials[i];
             for (int n = 0; n < maxDuplicatesPerPlayer; n++)
             {
                 NPCController newNPC = SpawnNPC(i);
-                //newNPC.GetComponent<NetworkObject>().Spawn();
             }
         }
-        
     }
 
+    /// <summary>
+    /// Spawns a new NPC at a random position within a randomly selected spawning zone.
+    /// </summary>
+    /// <param name="materialIndex">Index for player material assignment</param>
+    /// <returns>The spawned NPCController</returns>
     public NPCController SpawnNPC(int materialIndex = 0)
     {
-        if (!IsHost) return null;
+        if (!IsHost || spawningZones == null || spawningZones.Length == 0) return null;
         NPCController newNPC = null;
-        Material playerMaterial;
 
-        //Randomly Determine a Spawnpoint
-        float randomX = Random.Range(-spawnRadius, spawnRadius) + transform.position.x;
-        float randomZ = Random.Range(-spawnRadius, spawnRadius) + transform.position.z;
-        Vector3 randomPos = new Vector3(randomX, -0.46f, randomZ);
+        // Randomly select a spawning zone
+        MapZone zone = spawningZones[Random.Range(0, spawningZones.Length)];
+        Vector3 spawnPos = zone.GetRandomPointInArea();
 
-        //Spawn NPC Object & Replace Material to match player
+        // Spawn NPC Object
         newNPC = NetworkManager.Singleton.SpawnManager.InstantiateAndSpawn(npcPrefab, 0).GetComponent<NPCController>();
-        newNPC.transform.position = randomPos;
+        newNPC.transform.position = spawnPos;
 
-        //Instantiate(npcPrefab, randomPos, Quaternion.identity).GetComponent<NPCController>();
-
-        //playerMaterial = BountyManager.Instance.playerMaterials[materialIndex];
-
-        //Assign Info
+        // Assign Info
         newNPC.ReplaceMaterialRpc(materialIndex);
         newNPC.AssignSlotRpc(materialIndex);
 
@@ -100,12 +115,5 @@ public class NPCManager : NetworkBehaviour
         npcList = null;
     }
 
-    //RPC Spawn NPC Function^^^^
-    private void OnDrawGizmosSelected()
-    {
-        Gizmos.color = Color.magenta;
 
-        //Show Radius
-        Gizmos.DrawWireSphere(transform.position, spawnRadius);
-    }
 }

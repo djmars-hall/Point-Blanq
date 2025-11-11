@@ -67,6 +67,9 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
 
     private List<BaseCharController> detectedCharacters = new List<BaseCharController>();
+    
+    // Tracks which detected characters are actively being avoided (vs just detected but ignored)
+    private List<BaseCharController> avoidedCharacters = new List<BaseCharController>();
 
     // <==========================================================>
     // Public getters for edge avoidance settings
@@ -77,6 +80,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     public int MaxRaycastAttempts => maxRaycastAttempts;
     public float RaycastAngleIncrement => raycastAngleIncrement;
     public List<BaseCharController> DetectedCharacters => detectedCharacters;
+    public List<BaseCharController> AvoidedCharacters => avoidedCharacters;
     public float DetectionRadius => detectionRadius;
     public float DetectionAngle => detectionAngle;
     public float AvoidanceStrength => avoidanceStrength;
@@ -237,7 +241,8 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     /// <summary>
     /// Calculates an avoidance steering vector based on detected characters.
-    /// The closer another character is, the stronger the avoidance force.
+    /// Only avoids characters that are on a potential collision course.
+    /// The closer another character is and the sooner a collision would occur, the stronger the avoidance force.
     /// Returns a steering vector (not normalized) representing the avoidance direction and strength.
     /// </summary>
     /// <returns>A steering vector (not normalized) representing the avoidance direction and strength</returns>
@@ -247,26 +252,70 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             return Vector3.zero;
 
         Vector3 avoidanceVector = Vector3.zero;
+        
+        // Clear the avoided characters list from the previous frame
+        avoidedCharacters.Clear();
 
         foreach (BaseCharController otherCharacter in detectedCharacters)
         {
             if (otherCharacter == null || !otherCharacter.gameObject.activeInHierarchy)
                 continue;
 
-            // Calculate direction away from the other character
-            Vector3 directionAway = transform.position - otherCharacter.transform.position;
-            directionAway.y = 0; // Keep on XZ plane
+            // Calculate direction to the other character
+            Vector3 toOther = otherCharacter.transform.position - transform.position;
+            toOther.y = 0; // Keep on XZ plane
             
-            float distance = directionAway.magnitude;
+            float distance = toOther.magnitude;
             
             if (distance < 0.01f) // Avoid division by zero
                 continue;
 
-            // Normalize the direction
-            directionAway.Normalize();
+            Vector3 toOtherNormalized = toOther / distance;
+
+            // Get both characters' forward directions (flattened to XZ plane)
+            Vector3 myForward = transform.forward;
+            myForward.y = 0;
+            myForward.Normalize();
+
+            Vector3 otherForward = otherCharacter.transform.forward;
+            otherForward.y = 0;
+            otherForward.Normalize();
+
+            // Calculate dot product to determine if we're heading toward each other
+            // Positive dot product means we're moving toward the other character
+            float myApproachDot = Vector3.Dot(myForward, toOtherNormalized);
+            
+            // Check if we're too close (within avoidance distance) regardless of direction
+            bool isTooClose = distance < avoidanceDistance;
+            
+            // If we're not heading toward them AND not too close, skip avoidance
+            if (myApproachDot < 0.1f && !isTooClose)
+                continue;
+
+            // Calculate if the other character is heading toward us
+            float otherApproachDot = Vector3.Dot(otherForward, -toOtherNormalized);
+
+            // Calculate relative heading: are we on a collision course?
+            // If both are moving toward each other, this will be high
+            // If one is moving away or perpendicular, this will be low
+            float collisionThreat = myApproachDot * Mathf.Max(0f, otherApproachDot);
+
+            // Determine if this is a head-on collision (both moving toward each other)
+            bool isHeadOn = otherApproachDot > 0.3f;
+            
+            // Determine if we're following/tailgating (both moving in similar direction but too close)
+            bool isTailgating = isTooClose && myApproachDot > 0.1f && otherApproachDot < 0.3f;
+
+            // If there's no significant collision threat and we're not tailgating, skip
+            if (collisionThreat < 0.05f && !isTailgating)
+                continue;
+
+            // Calculate time to potential collision
+            // Lower time = more urgent avoidance needed
+            float relativeSpeed = npcWalkingSpeed + npcWalkingSpeed; // Assuming similar speeds
+            float timeToCollision = distance / Mathf.Max(0.1f, relativeSpeed * Mathf.Max(0.1f, collisionThreat));
 
             // Calculate avoidance strength based on distance
-            // Closer characters have stronger influence (inverse relationship)
             float avoidanceFactor;
             if (distance < avoidanceDistance)
             {
@@ -276,13 +325,94 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             else
             {
                 // Falloff based on distance relative to detection radius
-                // Goes from 1.0 at avoidanceDistance to 0.0 at detectionRadius
                 avoidanceFactor = 1.0f - ((distance - avoidanceDistance) / (detectionRadius - avoidanceDistance));
-                avoidanceFactor = Mathf.Max(0f, avoidanceFactor); // Clamp to 0
+                avoidanceFactor = Mathf.Max(0f, avoidanceFactor);
+            }
+
+            // Increase avoidance factor based on collision threat and urgency
+            avoidanceFactor *= Mathf.Max(0.3f, collisionThreat); // Minimum 30% factor for tailgating
+            
+            // Add time urgency factor (closer collision time = stronger avoidance)
+            float urgencyFactor = Mathf.Clamp01(3.0f / timeToCollision); // Peaks at ~3 seconds
+            avoidanceFactor *= (1.0f + urgencyFactor);
+
+            // For head-on collisions, boost avoidance significantly
+            if (isHeadOn)
+            {
+                avoidanceFactor *= 2.0f; // Double the avoidance strength for head-on scenarios
+            }
+            // For tailgating, apply moderate boost
+            else if (isTailgating)
+            {
+                avoidanceFactor *= 1.3f; // 30% boost for tailgating scenarios
+            }
+
+            // Consider assertiveness: binary decision - either yield or don't yield
+            if (otherCharacter.AssertivenessLevel > assertivenessLevel)
+            {
+                // We are less assertive, so we yield (apply full avoidance)
+                // avoidanceFactor remains unchanged
+            }
+            else if (otherCharacter.AssertivenessLevel < assertivenessLevel)
+            {
+                // We are more assertive, so we don't yield (skip this character)
+                // Exception: If tailgating, still avoid (move to the side)
+                if (!isTailgating)
+                    continue;
+            }
+            // If assertiveness is equal, both will avoid each other (default behavior)
+
+            // Add this character to the avoided list since we're applying avoidance
+            avoidedCharacters.Add(otherCharacter);
+
+            // Calculate avoidance direction
+            Vector3 avoidanceDirection;
+            
+            // For head-on collisions (both moving toward each other), move to the side
+            if (isHeadOn)
+            {
+                // Use assertiveness to deterministically choose which side to move to
+                // This ensures both NPCs don't pick the same side
+                Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+                
+                // Determine side based on assertiveness comparison
+                // Lower assertiveness moves right, higher moves left
+                // If equal, use relative position as tiebreaker
+                bool moveRight;
+                if (otherCharacter.AssertivenessLevel != assertivenessLevel)
+                {
+                    // Different assertiveness: less assertive moves right
+                    moveRight = assertivenessLevel < otherCharacter.AssertivenessLevel;
+                }
+                else
+                {
+                    // Equal assertiveness: use position as tiebreaker
+                    // Check which side the other character is on relative to our forward direction
+                    float sideChoice = Vector3.Dot(perpendicular, toOtherNormalized);
+                    moveRight = sideChoice > 0;
+                }
+                
+                avoidanceDirection = moveRight ? perpendicular : -perpendicular;
+            }
+            // For tailgating scenarios, move to the side to pass
+            else if (isTailgating)
+            {
+                Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+                
+                // Use assertiveness to choose passing side
+                // More assertive passes on the left, less assertive on the right
+                bool moveRight = assertivenessLevel <= otherCharacter.AssertivenessLevel;
+                
+                avoidanceDirection = moveRight ? perpendicular : -perpendicular;
+            }
+            else
+            {
+                // For other scenarios, move directly away
+                avoidanceDirection = -toOtherNormalized;
             }
 
             // Add weighted avoidance vector
-            avoidanceVector += directionAway * avoidanceFactor;
+            avoidanceVector += avoidanceDirection * avoidanceFactor;
         }
 
         // Apply overall avoidance strength

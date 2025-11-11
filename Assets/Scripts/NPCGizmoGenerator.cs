@@ -92,6 +92,7 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     /// <summary>
     /// Draws the NPC detection zone and detected NPCs with connection lines and directional arrows.
+    /// Red lines indicate characters being actively avoided, yellow lines indicate detected but ignored characters.
     /// </summary>
     private void DrawDetectionGizmos()
     {
@@ -104,18 +105,30 @@ public class NPCGizmoGenerator : MonoBehaviour
         float angle = npcController.DetectionAngle;
 
         // Draw the filled semicircle detection zone
-        DrawFilledSemicircle(position, forward, radius, angle);
+        DrawSemicircle(position, forward, radius, angle, filled: true);
+        
+        // Draw the avoidance distance boundary (outline only)
+        float avoidanceRadius = npcController.AvoidanceDistance;
+        DrawSemicircle(position, forward, avoidanceRadius, angle, filled: false);
 
-        // Draw red lines to detected characters
+        // Get both lists of characters
         List<BaseCharController> detectedCharacters = npcController.DetectedCharacters;
+        List<BaseCharController> avoidedCharacters = npcController.AvoidedCharacters;
+        
         if (detectedCharacters != null && detectedCharacters.Count > 0)
         {
             foreach (var detectedCharacter in detectedCharacters)
             {
                 if (detectedCharacter == null) continue;
 
-                // Draw red line from this NPC to detected character
-                Gizmos.color = detectionLineColor;
+                // Determine if this character is being avoided or just detected
+                bool isAvoided = avoidedCharacters != null && avoidedCharacters.Contains(detectedCharacter);
+                
+                // Red for avoided, yellow for ignored
+                Color lineColor = isAvoided ? Color.red : Color.yellow;
+
+                // Draw line from this NPC to detected character
+                Gizmos.color = lineColor;
                 Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
 
                 // Draw arrow showing the detected character's facing direction
@@ -131,9 +144,14 @@ public class NPCGizmoGenerator : MonoBehaviour
     }
 
     /// <summary>
-    /// Draws a filled semicircle in the forward direction of the NPC.
+    /// Draws a semicircle in the forward direction of the NPC.
     /// </summary>
-    private void DrawFilledSemicircle(Vector3 center, Vector3 forward, float radius, float angle)
+    /// <param name="center">Center position of the semicircle</param>
+    /// <param name="forward">Forward direction of the NPC</param>
+    /// <param name="radius">Radius of the semicircle</param>
+    /// <param name="angle">Total angle of the semicircle</param>
+    /// <param name="filled">If true, draws filled triangles; if false, draws outline only</param>
+    private void DrawSemicircle(Vector3 center, Vector3 forward, float radius, float angle, bool filled)
     {
         // Flatten forward to XZ plane
         forward.y = 0;
@@ -155,14 +173,26 @@ public class NPCGizmoGenerator : MonoBehaviour
             points[i] = center + direction * radius;
         }
 
-        // Draw triangles from center to each pair of arc points
         Gizmos.color = detectionZoneColor;
-        for (int i = 0; i < semicircleSegments; i++)
+
+        if (filled)
         {
-            DrawTriangle(center + offset, points[i] + offset, points[i + 1] + offset);
+            // Draw filled triangles from center to each pair of arc points
+            for (int i = 0; i < semicircleSegments; i++)
+            {
+                DrawTriangle(center + offset, points[i] + offset, points[i + 1] + offset);
+            }
+        }
+        else
+        {
+            // Draw outline only - arc segments
+            for (int i = 0; i < semicircleSegments; i++)
+            {
+                Gizmos.DrawLine(points[i] + offset, points[i + 1] + offset);
+            }
         }
 
-        // Draw lines from center to the arc edges
+        // Draw lines from center to the arc edges (for both filled and outline)
         Gizmos.DrawLine(center + offset, points[0] + offset);
         Gizmos.DrawLine(center + offset, points[semicircleSegments] + offset);
     }

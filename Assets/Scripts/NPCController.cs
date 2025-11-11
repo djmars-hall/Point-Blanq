@@ -50,9 +50,11 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     public Vector2 CornerZoneSize => cornerZoneSize;
 
     [Header("NPC Detection Settings")]
-    [SerializeField] private float detectionRadius = 5f; // Radius of the semicircle detection zone
+    [SerializeField] private float detectionRadius = 4f; // Radius of the semicircle detection zone
     [SerializeField] private float detectionAngle = 270f; // Angle of detection
     [SerializeField] private bool enableNPCDetection = true; // Toggle detection on/off
+    [SerializeField] private float avoidanceStrength = 1.5f; // How strongly NPCs avoid each other
+    [SerializeField] private float avoidanceDistance = 1.5f; // Distance at which avoidance is at maximum
     
     [Header("NavMesh Edge Detection Settings")]
     [SerializeField] private bool enableEdgeAvoidance = true; // Toggle edge avoidance on/off
@@ -61,20 +63,29 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     [SerializeField] private int maxRaycastAttempts = 24; // Maximum number of raycast attempts (alternating left/right)
     [SerializeField] private float raycastAngleIncrement = 5f; // Angle increment for each raycast attempt
     [SerializeField] private float edgeTurnSpeed = 2f; // Speed multiplier when turning away from edges...should I have this?
-    
+
+
+
+    private List<BaseCharController> detectedCharacters = new List<BaseCharController>();
+
+    // <==========================================================>
     // Public getters for edge avoidance settings
+    // <==========================================================>
     public bool EnableEdgeAvoidance => enableEdgeAvoidance;
     public float EdgeDetectionDistance => edgeDetectionDistance;
     public float EdgeCheckAheadDistance => edgeCheckAheadDistance;
     public int MaxRaycastAttempts => maxRaycastAttempts;
     public float RaycastAngleIncrement => raycastAngleIncrement;
-
-    private List<NPCController> detectedNPCs = new List<NPCController>();
-    public List<NPCController> DetectedNPCs => detectedNPCs;
+    public List<BaseCharController> DetectedCharacters => detectedCharacters;
     public float DetectionRadius => detectionRadius;
     public float DetectionAngle => detectionAngle;
+    public float AvoidanceStrength => avoidanceStrength;
+    public float AvoidanceDistance => avoidanceDistance;
+    // <==========================================================>
+    // Public getters for edge avoidance settings
+    // <==========================================================>
 
-    private float edgeBuffer = 0.5f; // Minimum distance from NavMesh edges
+    private float pathEdgeBuffer = 0.6f; // Distance to keep from edges when adjusting corners
 
     // Object Pooling
     public static ObjectPool<NPCController> objectPool = new ObjectPool<NPCController>(128);
@@ -122,8 +133,8 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     void FixedUpdate()
     {
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
+        //rb.linearVelocity = Vector3.zero;
+        //rb.angularVelocity = Vector3.zero;
         if (!IsOwner) { return; }
 
         // Update spatial grid cell if changed
@@ -137,14 +148,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             }
         }
 
-        // Scan for nearby NPCs
-        if (enableNPCDetection)
-        {
-            ScanForNearbyNPCs();
-        }
-
-        UpdatePositionClientRpc(transform.position, transform.rotation);
-
         switch (microState)
         {
             case NPCStatesMicro.Standing:
@@ -153,22 +156,24 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 {
                     NewWaypoint();
                 }
+                ProcessMovement(0f, 0f);
                 break;
             case NPCStatesMicro.Walking:
                 DecideMovement();
                 break;
             case NPCStatesMicro.Turning:
+                TurnUntilSafeDirection();
                 break;
         }
     }
 
     /// <summary>
-    /// Scans for nearby NPCs within a forward-facing semicircle detection zone.
+    /// Scans for nearby characters within a forward-facing semicircle detection zone.
     /// Uses the spatial grid for efficient neighbor queries.
     /// </summary>
-    private void ScanForNearbyNPCs()
+    private void ScanForNearbyCharacters()
     {
-        detectedNPCs.Clear();
+        detectedCharacters.Clear();
 
         if (SpatialGrid.Instance == null) return;
 
@@ -180,12 +185,11 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             // Skip self
             if (character == this) continue;
 
-            // Only detect other NPCs
-            NPCController otherNPC = character as NPCController;
-            if (otherNPC == null) continue;
+            // Detect any BaseCharController (including NPCs and Players)
+            if (character == null) continue;
 
             // Check if within detection radius
-            Vector3 toOther = otherNPC.transform.position - transform.position;
+            Vector3 toOther = character.transform.position - transform.position;
             float distance = toOther.magnitude;
 
             if (distance > detectionRadius) continue;
@@ -205,9 +209,86 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             // If within the detection angle (half angle on each side)
             if (angle <= detectionAngle * 0.5f)
             {
-                detectedNPCs.Add(otherNPC);
+                // Cast a ray from self to other character and check for NavMesh edge
+                bool edgeBetween = false;
+                int raySteps = Mathf.CeilToInt(distance / 0.5f); // step every 0.5 units
+                Vector3 rayDir = (character.transform.position - transform.position).normalized;
+                for (int i = 1; i < raySteps; i++)
+                {
+                    Vector3 samplePos = transform.position + rayDir * (i * 0.5f);
+                    NavMeshHit edgeHit;
+                    if (NavMesh.FindClosestEdge(samplePos, out edgeHit, NavMesh.AllAreas))
+                    {
+                        // If the edge is very close to the sample position, consider it blocking
+                        if (edgeHit.distance < 0.2f)
+                        {
+                            edgeBetween = true;
+                            break;
+                        }
+                    }
+                }
+                if (!edgeBetween)
+                {
+                    detectedCharacters.Add(character);
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Calculates an avoidance steering vector based on detected characters.
+    /// The closer another character is, the stronger the avoidance force.
+    /// Returns a steering vector (not normalized) representing the avoidance direction and strength.
+    /// </summary>
+    /// <returns>A steering vector (not normalized) representing the avoidance direction and strength</returns>
+    private Vector3 CalculateCharacterAvoidance()
+    {
+        if (detectedCharacters.Count == 0)
+            return Vector3.zero;
+
+        Vector3 avoidanceVector = Vector3.zero;
+
+        foreach (BaseCharController otherCharacter in detectedCharacters)
+        {
+            if (otherCharacter == null || !otherCharacter.gameObject.activeInHierarchy)
+                continue;
+
+            // Calculate direction away from the other character
+            Vector3 directionAway = transform.position - otherCharacter.transform.position;
+            directionAway.y = 0; // Keep on XZ plane
+            
+            float distance = directionAway.magnitude;
+            
+            if (distance < 0.01f) // Avoid division by zero
+                continue;
+
+            // Normalize the direction
+            directionAway.Normalize();
+
+            // Calculate avoidance strength based on distance
+            // Closer characters have stronger influence (inverse relationship)
+            float avoidanceFactor;
+            if (distance < avoidanceDistance)
+            {
+                // At very close distances, use maximum avoidance
+                avoidanceFactor = 1.0f;
+            }
+            else
+            {
+                // Falloff based on distance relative to detection radius
+                // Goes from 1.0 at avoidanceDistance to 0.0 at detectionRadius
+                avoidanceFactor = 1.0f - ((distance - avoidanceDistance) / (detectionRadius - avoidanceDistance));
+                avoidanceFactor = Mathf.Max(0f, avoidanceFactor); // Clamp to 0
+            }
+
+            // Add weighted avoidance vector
+            avoidanceVector += directionAway * avoidanceFactor;
+        }
+
+        // Apply overall avoidance strength
+        avoidanceVector *= avoidanceStrength;
+
+        return avoidanceVector;
     }
 
     private void NewWaypoint()
@@ -260,7 +341,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 SpawnMarker(edgeHit.position, i, " Edge Hit. Too Close?");
 
                 // Check if the corner is too close to the edge.
-                if (distToEdge < edgeBuffer)
+                if (distToEdge < pathEdgeBuffer)
                 {
                     SpawnMarker(corner, i, " TOO CLOSE!!!");
 
@@ -268,7 +349,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                     Vector3 pushDirection = edgeHit.normal;
                     
                     // Calculate how much farther we need to push (plus a little to offset)
-                    float deficit = (edgeBuffer - distToEdge) + 0.2f;
+                    float deficit = (pathEdgeBuffer - distToEdge) + 0.2f;
                     
                     // Calculate the new position
                     Vector3 newPosition = corner + pushDirection * deficit;
@@ -277,7 +358,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
                     // Re-sample the new position on the NavMesh to ensure it is valid.
                     NavMeshHit newHit;
-                    if (NavMesh.SamplePosition(newPosition, out newHit, edgeBuffer * 2, NavMesh.AllAreas))
+                    if (NavMesh.SamplePosition(newPosition, out newHit, pathEdgeBuffer * 2, NavMesh.AllAreas))
                     {
                         adjustedCorner = AdjustForOverCorrection(newHit.position, i);
                         SpawnMarker(adjustedCorner, i, " Corrected Pos");
@@ -300,7 +381,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
             SpawnMarker(edgeHit.position, order, " Edge Hit. Overcorrection?");
 
-            if (distToEdge < edgeBuffer)
+            if (distToEdge < pathEdgeBuffer)
             {
                 //Generate a new point, then take the average of the two
                 SpawnMarker(edgeHit.position, order, " TOO CLOSE!!! OverCorrection!");
@@ -309,7 +390,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 Vector3 pushDirection = edgeHit.normal;
 
                 // Calculate how much farther we need to push
-                float deficit = edgeBuffer - distToEdge;
+                float deficit = pathEdgeBuffer - distToEdge;
 
                 // Calculate the new position (in between corrected position and newly generated position)
                 Vector3 newPosition = ((generatedPoint + pushDirection * deficit) + generatedPoint) / 2;
@@ -318,7 +399,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
                 // Re-sample the new position on the NavMesh to ensure it is valid.
                 NavMeshHit newHit;
-                if (NavMesh.SamplePosition(newPosition, out newHit, edgeBuffer * 2, NavMesh.AllAreas))
+                if (NavMesh.SamplePosition(newPosition, out newHit, pathEdgeBuffer * 2, NavMesh.AllAreas))
                 {
                     return newHit.position;
                 }
@@ -380,8 +461,53 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             }
         }
 
-        // Calculate rotation direction
+        // Scan for nearby NPCs
+        if (enableNPCDetection)
+        {
+            ScanForNearbyCharacters();
+        }
+
+        // Calculate character avoidance force
+        Vector3 avoidanceForce = CalculateCharacterAvoidance();
+
+        // Calculate rotation direction and movement speed
         float rotationDir = 0f;
+        float movementSpeed = npcWalkingSpeed;
+
+        // Calculate desired direction to next corner
+        //Vector3 toCorner = pathCorners[0] - transform.position;
+        //toCorner.y = 0;
+        //toCorner.Normalize();
+
+        //The above will be enabled later, but for now this is better for testing:
+        Vector3 toCorner = transform.forward.normalized;
+
+
+        // Apply avoidance steering
+        Vector3 desiredDirection = toCorner + avoidanceForce;
+        desiredDirection.y = 0;
+        desiredDirection.Normalize();
+
+        // Calculate rotation needed to face desired direction
+        if (desiredDirection.magnitude > 0.01f)
+        {
+            Vector3 forward = transform.forward;
+            forward.y = 0;
+            forward.Normalize();
+
+            // Calculate signed angle between current forward and desired direction
+            float angleToDesired = Vector3.SignedAngle(forward, desiredDirection, Vector3.up);
+
+            // Convert angle to rotation direction (-1 to 1)
+            rotationDir = Mathf.Clamp(angleToDesired / 45f, -1f, 1f);
+
+        }
+
+        // Reduce speed if avoiding other NPCs
+        if (avoidanceForce.magnitude > 0.1f)
+        {
+            movementSpeed *= 0.7f; // Slow down when avoiding
+        }
 
         // Check for edge avoidance
         if (enableEdgeAvoidance)
@@ -396,17 +522,20 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 {
                     // Convert angle to rotation direction for ProcessMovement
                     rotationDir = Mathf.Sign(safeAngle);
-                    Debug.Log($"[{name}] EDGE DETECTED: Turning {safeAngle}° ({(safeAngle > 0 ? "right" : "left")})");
+                    movementSpeed = npcWalkingSpeed * 0.75f;
+                }
+                else
+                {
+                    // No safe direction found after all attempts: enter Turning state
+                    microState = NPCStatesMicro.Turning;
+                    Debug.Log($"[{name}] No safe direction found due to edges, entering Turning state");
+                    return;
                 }
             }
         }
 
-        // Execute movement with the calculated rotation (no forward movement for now)
-        if (rotationDir != 0f)
-        {
-            ProcessMovement(npcWalkingSpeed * 0.75f, rotationDir);
-        }
-        ProcessMovement(npcWalkingSpeed, rotationDir);
+        // Execute movement with the calculated rotation
+        ProcessMovement(movementSpeed, rotationDir);
     }
 
     /// <summary>
@@ -511,11 +640,28 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     }
 
     /// <summary>
-    /// Checks if the NPC is inside the perpendicular zone around a corner.
-    /// The zone is oriented perpendicular to the path direction (from previous corner to this corner).
+    /// Continuously turns the NPC right until a safe direction for movement is found.
+    /// Once a safe direction is found, transitions back to Walking state.
     /// </summary>
-    /// <param name="cornerIndex">Index of the corner to check</param>
-    /// <returns>True if the NPC is inside the corner's visitation zone</returns>
+    private void TurnUntilSafeDirection()
+    {
+        // Check if current forward direction is safe
+        Vector3 forward = transform.forward;
+        forward.y = 0;
+        forward.Normalize();
+
+        if (IsDirectionSafe(forward))
+        {
+            // Found a safe direction, return to walking state
+            microState = NPCStatesMicro.Walking;
+            Debug.Log($"[{name}] Found safe direction, returning to Walking state");
+            return;
+        }
+
+        // Continue turning right (no forward movement)
+        ProcessMovement(0f, 1f);
+    }
+
     private bool IsInsideCornerZone(int cornerIndex)
     {
         if (cornerIndex >= pathCorners.Count)

@@ -17,10 +17,9 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     [Header("NPC Detection Gizmo Settings")]
     [SerializeField] private bool showDetectionZone = true;
-    [SerializeField] private Color detectionZoneColor = new Color(0f, 1f, 1f, 0.2f); // Cyan semi-transparent
-    [SerializeField] private Color detectionZoneOutlineColor = new Color(0f, 1f, 1f, 0.8f); // Cyan outline
-    [SerializeField] private Color detectionLineColor = Color.yellow;
-    [SerializeField] private Color npcDirectionColor = Color.red;
+    [SerializeField] private Color detectionZoneColor = Color.cyan;
+    [SerializeField] private Color detectionLineColor = Color.red;
+    [SerializeField] private Color npcDirectionColor = Color.blue;
     [SerializeField] private float arrowSize = 0.5f;
     [SerializeField] private int semicircleSegments = 30; // Number of segments to draw the semicircle
 
@@ -107,26 +106,26 @@ public class NPCGizmoGenerator : MonoBehaviour
         // Draw the filled semicircle detection zone
         DrawFilledSemicircle(position, forward, radius, angle);
 
-        // Draw lines to detected NPCs and their directional arrows
-        List<NPCController> detectedNPCs = npcController.DetectedNPCs;
-        if (detectedNPCs != null && detectedNPCs.Count > 0)
+        // Draw red lines to detected characters
+        List<BaseCharController> detectedCharacters = npcController.DetectedCharacters;
+        if (detectedCharacters != null && detectedCharacters.Count > 0)
         {
-            foreach (var detectedNPC in detectedNPCs)
+            foreach (var detectedCharacter in detectedCharacters)
             {
-                if (detectedNPC == null) continue;
+                if (detectedCharacter == null) continue;
 
-                // Draw line from this NPC to detected NPC
+                // Draw red line from this NPC to detected character
                 Gizmos.color = detectionLineColor;
-                Gizmos.DrawLine(position + offset, detectedNPC.transform.position + offset);
+                Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
 
-                // Draw arrow showing the detected NPC's facing direction
-                Vector3 npcForward = detectedNPC.transform.forward;
-                Vector3 arrowStart = detectedNPC.transform.position + offset;
-                Vector3 arrowEnd = arrowStart + npcForward * 1.5f;
+                // Draw arrow showing the detected character's facing direction
+                Vector3 characterForward = detectedCharacter.transform.forward;
+                Vector3 arrowStart = detectedCharacter.transform.position + offset;
+                Vector3 arrowEnd = arrowStart + characterForward * 1.5f;
                 
                 Gizmos.color = npcDirectionColor;
                 Gizmos.DrawLine(arrowStart, arrowEnd);
-                DrawArrowHead(arrowEnd, npcForward, arrowSize);
+                DrawArrowHead(arrowEnd, characterForward, arrowSize);
             }
         }
     }
@@ -144,8 +143,7 @@ public class NPCGizmoGenerator : MonoBehaviour
         float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
 
         // Create points for the semicircle
-        Vector3[] points = new Vector3[semicircleSegments + 2];
-        points[0] = center; // Center point
+        Vector3[] points = new Vector3[semicircleSegments + 1];
 
         for (int i = 0; i <= semicircleSegments; i++)
         {
@@ -154,24 +152,21 @@ public class NPCGizmoGenerator : MonoBehaviour
             
             // Rotate the forward vector by the current angle around Y axis
             Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
-            points[i + 1] = center + direction * radius;
+            points[i] = center + direction * radius;
         }
 
-        // Draw filled triangles
+        // Draw triangles from center to each pair of arc points
         Gizmos.color = detectionZoneColor;
-        for (int i = 1; i <= semicircleSegments; i++)
+        for (int i = 0; i < semicircleSegments; i++)
         {
-            DrawTriangle(points[0] + offset, points[i] + offset, points[i + 1] + offset);
+            DrawTriangle(center + offset, points[i] + offset, points[i + 1] + offset);
         }
 
-        // Draw lines from center to edges
-        Gizmos.DrawLine(points[0] + offset, points[1] + offset);
-        Gizmos.DrawLine(points[0] + offset, points[semicircleSegments + 1] + offset);
+        // Draw lines from center to the arc edges
+        Gizmos.DrawLine(center + offset, points[0] + offset);
+        Gizmos.DrawLine(center + offset, points[semicircleSegments] + offset);
     }
 
-    /// <summary>
-    /// Draws a filled triangle by drawing lines between vertices.
-    /// </summary>
     private void DrawTriangle(Vector3 p1, Vector3 p2, Vector3 p3)
     {
         Gizmos.DrawLine(p1, p2);
@@ -212,10 +207,17 @@ public class NPCGizmoGenerator : MonoBehaviour
         forward.Normalize();
         Vector3 forwardCheckPos = position + forward * checkDistance;
 
-        bool forwardIsSafe = IsDirectionSafeGizmo(forward, checkDistance, detectionDistance);
+        bool forwardIsSafe;
+        Vector3 forwardEdgeHitPos;
+        (forwardIsSafe, forwardEdgeHitPos) = IsDirectionSafeGizmoWithEdge(forward, checkDistance, detectionDistance);
         Gizmos.color = forwardIsSafe ? Color.green : Color.red;
         Gizmos.DrawLine(position, forwardCheckPos);
-        DrawArrowHead(forwardCheckPos, forward, 0.5f);
+        DrawArrowHead(forwardCheckPos, forward, forwardIsSafe ? 0.75f : 0.5f);
+        if (!forwardIsSafe && forwardEdgeHitPos != Vector3.zero)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawLine(forwardCheckPos, forwardEdgeHitPos + offset);
+        }
 
         // If forward is not safe, check alternating directions and STOP at first safe one
         if (!forwardIsSafe)
@@ -229,24 +231,28 @@ public class NPCGizmoGenerator : MonoBehaviour
                 checkDir.Normalize();
                 Vector3 checkPos = position + checkDir * checkDistance;
                 
-                bool isSafe = IsDirectionSafeGizmo(checkDir, checkDistance, detectionDistance);
+                bool isSafe;
+                Vector3 edgeHitPos;
+                (isSafe, edgeHitPos) = IsDirectionSafeGizmoWithEdge(checkDir, checkDistance, detectionDistance);
                 Gizmos.color = isSafe ? Color.green : Color.red;
                 Gizmos.DrawLine(position, checkPos);
-                DrawArrowHead(checkPos, checkDir, 0.5f);
-                
-                // If this direction is safe, mark it with a sphere and STOP checking
+                DrawArrowHead(checkPos, checkDir, isSafe ? 0.75f : 0.5f);
+                if (!isSafe && edgeHitPos != Vector3.zero)
+                {
+                    Gizmos.color = Color.red;
+                    Gizmos.DrawLine(checkPos, edgeHitPos + offset);
+                }
+                // If this direction is safe, STOP checking
                 if (isSafe)
                 {
-                    Gizmos.color = Color.green;
-                    Gizmos.DrawSphere(checkPos, 0.3f);
                     break; // Stop checking after finding first safe direction
                 }
             }
         }
     }
 
-    // Helper for gizmo edge check (matches NPCController logic)
-    private bool IsDirectionSafeGizmo(Vector3 direction, float checkDistance, float detectionDistance)
+    // Helper for gizmo edge check (returns if safe and edge hit position)
+    private (bool, Vector3) IsDirectionSafeGizmoWithEdge(Vector3 direction, float checkDistance, float detectionDistance)
     {
         direction.y = 0;
         direction.Normalize();
@@ -254,13 +260,14 @@ public class NPCGizmoGenerator : MonoBehaviour
         NavMeshHit hit;
         if (!NavMesh.SamplePosition(checkPosition, out hit, checkDistance * 1.5f, NavMesh.AllAreas))
         {
-            return false;
+            return (false, Vector3.zero);
         }
         NavMeshHit edgeHit;
         if (NavMesh.FindClosestEdge(hit.position, out edgeHit, NavMesh.AllAreas))
         {
-            return edgeHit.distance >= detectionDistance;
+            bool safe = edgeHit.distance >= detectionDistance;
+            return (safe, edgeHit.position);
         }
-        return true;
+        return (true, Vector3.zero);
     }
 }

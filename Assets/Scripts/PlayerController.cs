@@ -75,8 +75,8 @@ public class PlayerController : BaseCharController, IObjectPoolable
 
     void FixedUpdate()
     {
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
+        //rb.linearVelocity = Vector3.zero;
+        //rb.angularVelocity = Vector3.zero;
         if (!GameManager.Instance.ignoreNetwork && !IsOwner) { return; }
 
         // Update spatial grid cell if changed

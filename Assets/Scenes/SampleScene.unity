@@ -8577,7 +8577,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   npcPrefab: {fileID: 2356324329269177612, guid: 796defca7e14c14499cb80ae39f5895f, type: 3}
   maxNPCs: 64
-  maxDuplicatesPerPlayer: 10
+  maxDuplicatesPerPlayer: 26
   spawnRadius: 10
   zoneParent: {fileID: 1496300170}
   spawningZones: []

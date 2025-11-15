@@ -73,8 +73,62 @@ public class NPCGizmoGenerator : MonoBehaviour
             }
         }
 
-        Gizmos.DrawLine(transform.position + offset, pathCorners[0] + offset);
+        // Draw line from NPC to the closest point in the first corner zone
+        if (pathCorners.Count > 0)
+        {
+            Vector3 closestPoint = CalculateClosestPointInCornerZone(pathCorners[0], previousCornerPosition);
+            Gizmos.DrawLine(transform.position + offset, closestPoint + offset);
+        }
+        
         Gizmos.DrawSphere(transform.position + offset, gizmoRadius);
+    }
+
+    /// <summary>
+    /// Calculates the closest point in the corner zone (center, left edge, or right edge) to the NPC.
+    /// Mirrors the logic used in NPCController.CalculateTargetDirection().
+    /// </summary>
+    /// <param name="cornerPosition">The position of the corner</param>
+    /// <param name="previousCornerPosition">The position of the previous corner</param>
+    /// <returns>The closest point in the corner zone to the NPC</returns>
+    private Vector3 CalculateClosestPointInCornerZone(Vector3 cornerPosition, Vector3 previousCornerPosition)
+    {
+        Vector3 npcPosition = transform.position;
+        
+        // Flatten to XZ plane
+        cornerPosition.y = 0;
+        npcPosition.y = 0;
+        previousCornerPosition.y = 0;
+        
+        // Calculate path direction
+        Vector3 pathDirection = (cornerPosition - previousCornerPosition).normalized;
+        
+        // Calculate perpendicular direction (left/right of path)
+        Vector3 perpendicular = Vector3.Cross(pathDirection, Vector3.up).normalized;
+        
+        // Get half width of the corner zone
+        float halfWidth = npcController.CornerZoneSize.x * 0.5f;
+        
+        // Three candidate points: center, left edge, right edge of corner zone
+        Vector3 centerPoint = cornerPosition;
+        Vector3 leftPoint = cornerPosition + perpendicular * halfWidth;
+        Vector3 rightPoint = cornerPosition - perpendicular * halfWidth;
+        
+        // Find which point is closest
+        float distToCenter = Vector3.Distance(npcPosition, centerPoint);
+        float distToLeft = Vector3.Distance(npcPosition, leftPoint);
+        float distToRight = Vector3.Distance(npcPosition, rightPoint);
+        
+        Vector3 closestPoint = centerPoint;
+        if (distToLeft < distToCenter && distToLeft < distToRight)
+        {
+            closestPoint = leftPoint;
+        }
+        else if (distToRight < distToCenter && distToRight < distToLeft)
+        {
+            closestPoint = rightPoint;
+        }
+        
+        return closestPoint;
     }
 
     private void DrawCornerZone(int cornerIndex, Vector3 position, Vector3 direction)
@@ -97,6 +151,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// <summary>
     /// Draws the NPC detection zone and detected NPCs with connection lines and directional arrows.
     /// Red lines indicate high avoidance intensity, orange for moderate avoidance, yellow for no avoidance.
+    /// Blue arrows show the detected character's velocity direction (only drawn if character is moving).
     /// </summary>
     private void DrawDetectionGizmos()
     {
@@ -141,12 +196,12 @@ public class NPCGizmoGenerator : MonoBehaviour
                         // Yellow for no avoidance (detected but not avoided)
                         lineColor = Color.yellow;
                     }
-                    else if (intensity >= 1.5f)
+                    else if (intensity >= 1f)
                     {
                         // Red for high avoidance (head-on collisions, urgent scenarios)
                         lineColor = Color.red;
                     }
-                    else if (intensity >= 0.5f)
+                    else if (intensity >= 0.3f)
                     {
                         // Orange for moderate avoidance
                         lineColor = new Color(1f, 0.5f, 0f); // Orange
@@ -161,14 +216,24 @@ public class NPCGizmoGenerator : MonoBehaviour
                     Gizmos.color = lineColor;
                     Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
 
-                    // Draw arrow showing the detected character's facing direction
-                    Vector3 characterForward = detectedCharacter.transform.forward;
-                    Vector3 arrowStart = detectedCharacter.transform.position + offset;
-                    Vector3 arrowEnd = arrowStart + characterForward * 1.5f;
-                    
-                    Gizmos.color = npcDirectionColor;
-                    Gizmos.DrawLine(arrowStart, arrowEnd);
-                    DrawArrowHead(arrowEnd, characterForward, arrowSize);
+                    // Only draw the arrow showing movement direction if the character is actually moving
+                    if (detectedCharacter.Rb != null)
+                    {
+                        Vector3 velocity = detectedCharacter.Rb.linearVelocity;
+                        velocity.y = 0; // Flatten to XZ plane
+                        
+                        // Only draw arrow if velocity is significant (character is moving)
+                        if (velocity.magnitude > 0.01f)
+                        {
+                            Vector3 velocityDirection = velocity.normalized;
+                            Vector3 arrowStart = detectedCharacter.transform.position + offset;
+                            Vector3 arrowEnd = arrowStart + velocityDirection * 1.5f;
+                            
+                            Gizmos.color = npcDirectionColor;
+                            Gizmos.DrawLine(arrowStart, arrowEnd);
+                            DrawArrowHead(arrowEnd, velocityDirection, arrowSize);
+                        }
+                    }
                 }
             }
         }
@@ -312,22 +377,37 @@ public class NPCGizmoGenerator : MonoBehaviour
     }
 
     // Helper for gizmo edge check (returns if safe and edge hit position)
+    // Uses NavMesh.Raycast to ensure no walls or obstacles block the path.
     private (bool, Vector3) IsDirectionSafeGizmoWithEdge(Vector3 direction, float checkDistance, float detectionDistance)
     {
         direction.y = 0;
         direction.Normalize();
         Vector3 checkPosition = transform.position + direction * checkDistance;
-        NavMeshHit hit;
-        if (!NavMesh.SamplePosition(checkPosition, out hit, checkDistance * 1.5f, NavMesh.AllAreas))
+        
+        // First check: Use NavMesh.Raycast to check if there's a clear path (no obstacles/walls)
+        NavMeshHit raycastHit;
+        if (NavMesh.Raycast(transform.position, checkPosition, out raycastHit, NavMesh.AllAreas))
         {
+            // Raycast hit something - there's an obstacle or edge in this direction
+            return (false, raycastHit.position);
+        }
+        
+        // Second check: Ensure the end position is still on NavMesh with tight tolerance
+        NavMeshHit sampleHit;
+        if (!NavMesh.SamplePosition(checkPosition, out sampleHit, 0.5f, NavMesh.AllAreas))
+        {
+            // Position is off NavMesh - not safe
             return (false, Vector3.zero);
         }
+        
+        // Third check: Verify the sampled position isn't too close to an edge
         NavMeshHit edgeHit;
-        if (NavMesh.FindClosestEdge(hit.position, out edgeHit, NavMesh.AllAreas))
+        if (NavMesh.FindClosestEdge(sampleHit.position, out edgeHit, NavMesh.AllAreas))
         {
             bool safe = edgeHit.distance >= detectionDistance;
             return (safe, edgeHit.position);
         }
+        
         return (true, Vector3.zero);
     }
 }

@@ -73,8 +73,10 @@ public class PlayerController : BaseCharController, IObjectPoolable
     }
 
 
-    void FixedUpdate()
+    protected override void FixedUpdate()
     {
+        base.FixedUpdate();
+
         //rb.linearVelocity = Vector3.zero;
         //rb.angularVelocity = Vector3.zero;
         if (!GameManager.Instance.ignoreNetwork && !IsOwner) { return; }

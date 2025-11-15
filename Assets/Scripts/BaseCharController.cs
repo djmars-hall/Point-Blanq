@@ -14,6 +14,11 @@ public class BaseCharController : NetworkBehaviour
     protected Rigidbody rb;
 
     /// <summary>
+    /// Public getter for the Rigidbody component
+    /// </summary>
+    public Rigidbody Rb => rb;
+
+    /// <summary>
     /// Assertiveness level determines right-of-way in collision scenarios.
     /// Higher values mean the character is more assertive and will not yield.
     /// Range: 1-9999
@@ -21,11 +26,22 @@ public class BaseCharController : NetworkBehaviour
     protected int assertivenessLevel;
     public int AssertivenessLevel => assertivenessLevel;
 
+    // Track actual velocity for movement detection
+    private Vector3 previousPosition;
+    private Vector3 actualVelocity;
+
+    /// <summary>
+    /// The actual velocity of the character based on position changes between frames.
+    /// Used for determining if a character is moving and their heading.
+    /// </summary>
+    public Vector3 ActualVelocity => actualVelocity;
+
     protected virtual void Awake()
     {
         rb = GetComponent<Rigidbody>();
         // Initialize assertiveness level with a random value
         assertivenessLevel = UnityEngine.Random.Range(1, 10000);
+        previousPosition = transform.position;
     }
 
     void Start()
@@ -33,6 +49,16 @@ public class BaseCharController : NetworkBehaviour
     }
     void Update()
     {
+    }
+
+    protected virtual void FixedUpdate()
+    {
+        // Calculate actual velocity based on position change
+        if (Time.fixedDeltaTime > 0)
+        {
+            actualVelocity = (transform.position - previousPosition) / Time.fixedDeltaTime;
+            previousPosition = transform.position;
+        }
     }
 
 

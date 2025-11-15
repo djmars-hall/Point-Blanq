@@ -17,6 +17,8 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     [Header("NPC Detection Gizmo Settings")]
     [SerializeField] private bool showDetectionZone = true;
+    [SerializeField] private bool showAvoidanceDistanceBoundary = true;
+    [SerializeField] private bool showDetectedCharacterLines = true;
     [SerializeField] private Color detectionZoneColor = Color.cyan;
     [SerializeField] private Color detectionLineColor = Color.red;
     [SerializeField] private Color npcDirectionColor = Color.blue;
@@ -33,6 +35,8 @@ public class NPCGizmoGenerator : MonoBehaviour
     private void OnDrawGizmos()
     {
         if(onlyShowWhenSelected) return;
+        if (npcController == null) return;
+        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
         DrawPathGizmos();
         DrawDetectionGizmos();
         DrawEdgeAvoidanceGizmos();
@@ -40,6 +44,8 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        if (npcController == null) return;
+        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
         DrawPathGizmos();
         DrawDetectionGizmos();
         DrawEdgeAvoidanceGizmos();
@@ -48,9 +54,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     private void DrawPathGizmos()
     {
         if (!showPaths) return;
-        if (npcController == null) return;
-        if (npcController.MicroState == NPCController.NPCStatesMicro.Standing) return;
-
+        
         pathCorners = npcController.PathCorners;
         if (pathCorners == null || pathCorners.Count == 0) return;
         Gizmos.color = gizmoColor;
@@ -92,12 +96,11 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     /// <summary>
     /// Draws the NPC detection zone and detected NPCs with connection lines and directional arrows.
-    /// Red lines indicate characters being actively avoided, yellow lines indicate detected but ignored characters.
+    /// Red lines indicate high avoidance intensity, orange for moderate avoidance, yellow for no avoidance.
     /// </summary>
     private void DrawDetectionGizmos()
     {
-        if (!showDetectionZone) return;
-        if (npcController == null) return;
+        if (!showDetectionZone && !showAvoidanceDistanceBoundary && !showDetectedCharacterLines) return;
 
         Vector3 position = transform.position;
         Vector3 forward = transform.forward;
@@ -105,40 +108,68 @@ public class NPCGizmoGenerator : MonoBehaviour
         float angle = npcController.DetectionAngle;
 
         // Draw the filled semicircle detection zone
-        DrawSemicircle(position, forward, radius, angle, filled: true);
+        if (showDetectionZone)
+        {
+            DrawSemicircle(position, forward, radius, angle, filled: true);
+        }
         
         // Draw the avoidance distance boundary (outline only)
-        float avoidanceRadius = npcController.AvoidanceDistance;
-        DrawSemicircle(position, forward, avoidanceRadius, angle, filled: false);
-
-        // Get both lists of characters
-        List<BaseCharController> detectedCharacters = npcController.DetectedCharacters;
-        List<BaseCharController> avoidedCharacters = npcController.AvoidedCharacters;
-        
-        if (detectedCharacters != null && detectedCharacters.Count > 0)
+        if (showAvoidanceDistanceBoundary)
         {
-            foreach (var detectedCharacter in detectedCharacters)
+            float avoidanceRadius = npcController.AvoidanceDistance;
+            DrawSemicircle(position, forward, avoidanceRadius, angle, filled: false);
+        }
+
+        // Get detected characters with their intensities
+        if (showDetectedCharacterLines)
+        {
+            Dictionary<BaseCharController, float> detectedCharacterIntensities = npcController.DetectedCharacterIntensities;
+            
+            if (detectedCharacterIntensities != null && detectedCharacterIntensities.Count > 0)
             {
-                if (detectedCharacter == null) continue;
+                foreach (var kvp in detectedCharacterIntensities)
+                {
+                    BaseCharController detectedCharacter = kvp.Key;
+                    float intensity = kvp.Value;
+                    
+                    if (detectedCharacter == null) continue;
 
-                // Determine if this character is being avoided or just detected
-                bool isAvoided = avoidedCharacters != null && avoidedCharacters.Contains(detectedCharacter);
-                
-                // Red for avoided, yellow for ignored
-                Color lineColor = isAvoided ? Color.red : Color.yellow;
+                    // Determine line color based on avoidance intensity
+                    Color lineColor;
+                    if (intensity <= 0.0f)
+                    {
+                        // Yellow for no avoidance (detected but not avoided)
+                        lineColor = Color.yellow;
+                    }
+                    else if (intensity >= 1.5f)
+                    {
+                        // Red for high avoidance (head-on collisions, urgent scenarios)
+                        lineColor = Color.red;
+                    }
+                    else if (intensity >= 0.5f)
+                    {
+                        // Orange for moderate avoidance
+                        lineColor = new Color(1f, 0.5f, 0f); // Orange
+                    }
+                    else
+                    {
+                        // Yellow for low avoidance
+                        lineColor = Color.yellow;
+                    }
 
-                // Draw line from this NPC to detected character
-                Gizmos.color = lineColor;
-                Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
+                    // Draw line from this NPC to detected character
+                    Gizmos.color = lineColor;
+                    Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
 
-                // Draw arrow showing the detected character's facing direction
-                Vector3 characterForward = detectedCharacter.transform.forward;
-                Vector3 arrowStart = detectedCharacter.transform.position + offset;
-                Vector3 arrowEnd = arrowStart + characterForward * 1.5f;
-                
-                Gizmos.color = npcDirectionColor;
-                Gizmos.DrawLine(arrowStart, arrowEnd);
-                DrawArrowHead(arrowEnd, characterForward, arrowSize);
+                    // Draw arrow showing the detected character's facing direction
+                    Vector3 characterForward = detectedCharacter.transform.forward;
+                    Vector3 arrowStart = detectedCharacter.transform.position + offset;
+                    Vector3 arrowEnd = arrowStart + characterForward * 1.5f;
+                    
+                    Gizmos.color = npcDirectionColor;
+                    Gizmos.DrawLine(arrowStart, arrowEnd);
+                    DrawArrowHead(arrowEnd, characterForward, arrowSize);
+                }
             }
         }
     }
@@ -220,7 +251,6 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// </summary>
     private void DrawEdgeAvoidanceGizmos()
     {
-        if (npcController == null) return;
         if (!npcController.enabled) return;
         if (!npcController.gameObject.activeInHierarchy) return;
         if (!npcController.EnableEdgeAvoidance) return;

@@ -43,6 +43,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     [Header("Generic NPC Behavior Settings")]
     [SerializeField] private float npcWalkingSpeed = 1f; // Walking speed of the NPC
+    [SerializeField] private bool followPathCorners = false; // Toggle between following path corners or moving forward
 
 
     [Header("Path Corner Settings")]
@@ -64,12 +65,10 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     [SerializeField] private float raycastAngleIncrement = 5f; // Angle increment for each raycast attempt
     [SerializeField] private float edgeTurnSpeed = 2f; // Speed multiplier when turning away from edges...should I have this?
 
-
-
-    private List<BaseCharController> detectedCharacters = new List<BaseCharController>();
-    
-    // Tracks which detected characters are actively being avoided (vs just detected but ignored)
-    private List<BaseCharController> avoidedCharacters = new List<BaseCharController>();
+    // Tracks detected characters and their avoidance intensity (0.0 to 1.0+)
+    // Key: detected character, Value: avoidance intensity
+    // If a character is in this dictionary, they are detected. If intensity > 0, they are being avoided.
+    private Dictionary<BaseCharController, float> detectedCharacterIntensities = new Dictionary<BaseCharController, float>();
 
     // <==========================================================>
     // Public getters for edge avoidance settings
@@ -79,8 +78,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     public float EdgeCheckAheadDistance => edgeCheckAheadDistance;
     public int MaxRaycastAttempts => maxRaycastAttempts;
     public float RaycastAngleIncrement => raycastAngleIncrement;
-    public List<BaseCharController> DetectedCharacters => detectedCharacters;
-    public List<BaseCharController> AvoidedCharacters => avoidedCharacters;
+    public Dictionary<BaseCharController, float> DetectedCharacterIntensities => detectedCharacterIntensities;
     public float DetectionRadius => detectionRadius;
     public float DetectionAngle => detectionAngle;
     public float AvoidanceStrength => avoidanceStrength;
@@ -177,7 +175,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     /// </summary>
     private void ScanForNearbyCharacters()
     {
-        detectedCharacters.Clear();
+        detectedCharacterIntensities.Clear();
 
         if (SpatialGrid.Instance == null) return;
 
@@ -233,7 +231,8 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 }
                 if (!edgeBetween)
                 {
-                    detectedCharacters.Add(character);
+                    // Add detected character with initial intensity of 0.0
+                    detectedCharacterIntensities[character] = 0.0f;
                 }
             }
         }
@@ -248,15 +247,15 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     /// <returns>A steering vector (not normalized) representing the avoidance direction and strength</returns>
     private Vector3 CalculateCharacterAvoidance()
     {
-        if (detectedCharacters.Count == 0)
+        if (detectedCharacterIntensities.Count == 0)
             return Vector3.zero;
 
         Vector3 avoidanceVector = Vector3.zero;
-        
-        // Clear the avoided characters list from the previous frame
-        avoidedCharacters.Clear();
 
-        foreach (BaseCharController otherCharacter in detectedCharacters)
+        // Create a copy of the keys to iterate over (allows safe modification of dictionary values)
+        var detectedCharactersList = new List<BaseCharController>(detectedCharacterIntensities.Keys);
+
+        foreach (BaseCharController otherCharacter in detectedCharactersList)
         {
             if (otherCharacter == null || !otherCharacter.gameObject.activeInHierarchy)
                 continue;
@@ -267,8 +266,11 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             
             float distance = toOther.magnitude;
             
-            if (distance < 0.01f) // Avoid division by zero
+            if (distance < 0.01f)
+            {
+                Debug.LogWarning("Two characters are extremely close! Skipping avoidance calculation to avoid division by zero.");
                 continue;
+            }
 
             Vector3 toOtherNormalized = toOther / distance;
 
@@ -287,10 +289,19 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             
             // Check if we're too close (within avoidance distance) regardless of direction
             bool isTooClose = distance < avoidanceDistance;
+
+            if(isTooClose)
+            {
+                detectedCharacterIntensities[otherCharacter] = 1.0f;
+            }
             
             // If we're not heading toward them AND not too close, skip avoidance
             if (myApproachDot < 0.1f && !isTooClose)
+            {
+                // Set intensity to 0 (detected but not avoided)
+                detectedCharacterIntensities[otherCharacter] = 0.0f;
                 continue;
+            }
 
             // Calculate if the other character is heading toward us
             float otherApproachDot = Vector3.Dot(otherForward, -toOtherNormalized);
@@ -308,7 +319,11 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
             // If there's no significant collision threat and we're not tailgating, skip
             if (collisionThreat < 0.05f && !isTailgating)
+            {
+                // Set intensity to 0 (detected but not avoided)
+                detectedCharacterIntensities[otherCharacter] = 0.0f;
                 continue;
+            }
 
             // Calculate time to potential collision
             // Lower time = more urgent avoidance needed
@@ -329,6 +344,9 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 avoidanceFactor = Mathf.Max(0f, avoidanceFactor);
             }
 
+            // Store the base avoidance factor before modifications for intensity tracking
+            float baseAvoidanceFactor = avoidanceFactor;
+
             // Increase avoidance factor based on collision threat and urgency
             avoidanceFactor *= Mathf.Max(0.3f, collisionThreat); // Minimum 30% factor for tailgating
             
@@ -339,12 +357,12 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             // For head-on collisions, boost avoidance significantly
             if (isHeadOn)
             {
-                avoidanceFactor *= 2.0f; // Double the avoidance strength for head-on scenarios
+                avoidanceFactor *= 2.0f;
             }
             // For tailgating, apply moderate boost
             else if (isTailgating)
             {
-                avoidanceFactor *= 1.3f; // 30% boost for tailgating scenarios
+                avoidanceFactor *= 1.3f;
             }
 
             // Consider assertiveness: binary decision - either yield or don't yield
@@ -358,12 +376,18 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 // We are more assertive, so we don't yield (skip this character)
                 // Exception: If tailgating, still avoid (move to the side)
                 if (!isTailgating)
+                {
+                    // Set intensity to 0 (detected but not avoided due to assertiveness)
+                    detectedCharacterIntensities[otherCharacter] = 0.0f;
                     continue;
+                }
             }
             // If assertiveness is equal, both will avoid each other (default behavior)
 
-            // Add this character to the avoided list since we're applying avoidance
-            avoidedCharacters.Add(otherCharacter);
+            // Store normalized avoidance intensity (0.0 to 1.0+)
+            // Intensity considers: distance, collision threat, urgency, scenario type
+            float intensity = avoidanceFactor / avoidanceStrength;
+            detectedCharacterIntensities[otherCharacter] = intensity;
 
             // Calculate avoidance direction
             Vector3 avoidanceDirection;
@@ -604,14 +628,19 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         float rotationDir = 0f;
         float movementSpeed = npcWalkingSpeed;
 
-        // Calculate desired direction to next corner
-        //Vector3 toCorner = pathCorners[0] - transform.position;
-        //toCorner.y = 0;
-        //toCorner.Normalize();
-
-        //The above will be enabled later, but for now this is better for testing:
-        Vector3 toCorner = transform.forward.normalized;
-
+        // Calculate desired direction to next corner or forward
+        Vector3 toCorner;
+        if (followPathCorners)
+        {
+            toCorner = pathCorners[0] - transform.position;
+            toCorner.y = 0;
+            toCorner.Normalize();
+        }
+        else
+        {
+            // Just move forward in current direction
+            toCorner = transform.forward.normalized;
+        }
 
         // Apply avoidance steering
         Vector3 desiredDirection = toCorner + avoidanceForce;
@@ -630,7 +659,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
             // Convert angle to rotation direction (-1 to 1)
             rotationDir = Mathf.Clamp(angleToDesired / 45f, -1f, 1f);
-
         }
 
         // Reduce speed if avoiding other NPCs

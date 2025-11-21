@@ -55,11 +55,11 @@ public class NPCGizmoGenerator : MonoBehaviour
     {
         if (!showPaths) return;
         
-        pathCorners = npcController.PathCorners;
+        pathCorners = npcController.Pathway.PathCorners;
         if (pathCorners == null || pathCorners.Count == 0) return;
         Gizmos.color = gizmoColor;
 
-        Vector3 previousCornerPosition = npcController.PreviousCornerPosition;
+        Vector3 previousCornerPosition = npcController.Pathway.PreviousCornerPosition;
 
         for (int i = 0; i < pathCorners.Count; i++)
         {
@@ -76,59 +76,11 @@ public class NPCGizmoGenerator : MonoBehaviour
         // Draw line from NPC to the closest point in the first corner zone
         if (pathCorners.Count > 0)
         {
-            Vector3 closestPoint = CalculateClosestPointInCornerZone(pathCorners[0], previousCornerPosition);
+            Vector3 closestPoint = npcController.Pathway.GetClosestPointInCornerZone(transform.position, 0);
             Gizmos.DrawLine(transform.position + offset, closestPoint + offset);
         }
         
         Gizmos.DrawSphere(transform.position + offset, gizmoRadius);
-    }
-
-    /// <summary>
-    /// Calculates the closest point in the corner zone (center, left edge, or right edge) to the NPC.
-    /// Mirrors the logic used in NPCController.CalculateTargetDirection().
-    /// </summary>
-    /// <param name="cornerPosition">The position of the corner</param>
-    /// <param name="previousCornerPosition">The position of the previous corner</param>
-    /// <returns>The closest point in the corner zone to the NPC</returns>
-    private Vector3 CalculateClosestPointInCornerZone(Vector3 cornerPosition, Vector3 previousCornerPosition)
-    {
-        Vector3 npcPosition = transform.position;
-        
-        // Flatten to XZ plane
-        cornerPosition.y = 0;
-        npcPosition.y = 0;
-        previousCornerPosition.y = 0;
-        
-        // Calculate path direction
-        Vector3 pathDirection = (cornerPosition - previousCornerPosition).normalized;
-        
-        // Calculate perpendicular direction (left/right of path)
-        Vector3 perpendicular = Vector3.Cross(pathDirection, Vector3.up).normalized;
-        
-        // Get half width of the corner zone
-        float halfWidth = npcController.CornerZoneSize.x * 0.5f;
-        
-        // Three candidate points: center, left edge, right edge of corner zone
-        Vector3 centerPoint = cornerPosition;
-        Vector3 leftPoint = cornerPosition + perpendicular * halfWidth;
-        Vector3 rightPoint = cornerPosition - perpendicular * halfWidth;
-        
-        // Find which point is closest
-        float distToCenter = Vector3.Distance(npcPosition, centerPoint);
-        float distToLeft = Vector3.Distance(npcPosition, leftPoint);
-        float distToRight = Vector3.Distance(npcPosition, rightPoint);
-        
-        Vector3 closestPoint = centerPoint;
-        if (distToLeft < distToCenter && distToLeft < distToRight)
-        {
-            closestPoint = leftPoint;
-        }
-        else if (distToRight < distToCenter && distToRight < distToLeft)
-        {
-            closestPoint = rightPoint;
-        }
-        
-        return closestPoint;
     }
 
     private void DrawCornerZone(int cornerIndex, Vector3 position, Vector3 direction)
@@ -150,6 +102,7 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     /// <summary>
     /// Draws the NPC detection zone and detected NPCs with connection lines and directional arrows.
+    /// Draws rectangles between the avoidance distance boundary and detection radius.
     /// Red lines indicate high avoidance intensity, orange for moderate avoidance, yellow for no avoidance.
     /// Blue arrows show the detected character's velocity direction (only drawn if character is moving).
     /// </summary>
@@ -161,18 +114,24 @@ public class NPCGizmoGenerator : MonoBehaviour
         Vector3 forward = transform.forward;
         float radius = npcController.DetectionRadius;
         float angle = npcController.DetectionAngle;
+        float avoidanceRadius = npcController.AvoidanceDistance;
 
-        // Draw the filled semicircle detection zone
+        // Draw the rectangles between avoidance distance and detection radius
         if (showDetectionZone)
         {
-            DrawSemicircle(position, forward, radius, angle, filled: true);
+            DrawSemicircleRectangles(position, forward, avoidanceRadius, radius, angle);
         }
         
         // Draw the avoidance distance boundary (outline only)
         if (showAvoidanceDistanceBoundary)
         {
-            float avoidanceRadius = npcController.AvoidanceDistance;
-            DrawSemicircle(position, forward, avoidanceRadius, angle, filled: false);
+            DrawSemicircleOutline(position, forward, avoidanceRadius, angle);
+        }
+
+        // Draw the detection radius boundary (outline only)
+        if (showDetectionZone)
+        {
+            DrawSemicircleOutline(position, forward, radius, angle);
         }
 
         // Get detected characters with their intensities
@@ -216,27 +175,124 @@ public class NPCGizmoGenerator : MonoBehaviour
                     Gizmos.color = lineColor;
                     Gizmos.DrawLine(position + offset, detectedCharacter.transform.position + offset);
 
-                    // Only draw the arrow showing movement direction if the character is actually moving
-                    if (detectedCharacter.Rb != null)
+                    // Use ActualVelocity to determine if character is moving and their direction
+                    Vector3 velocity = detectedCharacter.ActualVelocity;
+                    velocity.y = 0; // Flatten to XZ plane
+                    
+                    // Only draw arrow if velocity is significant (character is moving)
+                    if (velocity.magnitude > 0.01f)
                     {
-                        Vector3 velocity = detectedCharacter.Rb.linearVelocity;
-                        velocity.y = 0; // Flatten to XZ plane
+                        Vector3 velocityDirection = velocity.normalized;
+                        Vector3 arrowStart = detectedCharacter.transform.position + offset;
+                        Vector3 arrowEnd = arrowStart + velocityDirection * 1.5f;
                         
-                        // Only draw arrow if velocity is significant (character is moving)
-                        if (velocity.magnitude > 0.01f)
-                        {
-                            Vector3 velocityDirection = velocity.normalized;
-                            Vector3 arrowStart = detectedCharacter.transform.position + offset;
-                            Vector3 arrowEnd = arrowStart + velocityDirection * 1.5f;
-                            
-                            Gizmos.color = npcDirectionColor;
-                            Gizmos.DrawLine(arrowStart, arrowEnd);
-                            DrawArrowHead(arrowEnd, velocityDirection, arrowSize);
-                        }
+                        Gizmos.color = npcDirectionColor;
+                        Gizmos.DrawLine(arrowStart, arrowEnd);
+                        DrawArrowHead(arrowEnd, velocityDirection, arrowSize);
                     }
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Draws rectangles between the inner and outer semicircles to create a detection zone band.
+    /// </summary>
+    /// <param name="center">Center position of the semicircles</param>
+    /// <param name="forward">Forward direction of the NPC</param>
+    /// <param name="innerRadius">Inner radius (avoidance distance)</param>
+    /// <param name="outerRadius">Outer radius (detection radius)</param>
+    /// <param name="angle">Total angle of the semicircle</param>
+    private void DrawSemicircleRectangles(Vector3 center, Vector3 forward, float innerRadius, float outerRadius, float angle)
+    {
+        // Flatten forward to XZ plane
+        forward.y = 0;
+        forward.Normalize();
+
+        // Calculate the half angle in radians
+        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
+
+        // Create points for both semicircles
+        Vector3[] innerPoints = new Vector3[semicircleSegments + 1];
+        Vector3[] outerPoints = new Vector3[semicircleSegments + 1];
+
+        for (int i = 0; i <= semicircleSegments; i++)
+        {
+            float t = (float)i / semicircleSegments;
+            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
+            
+            // Rotate the forward vector by the current angle around Y axis
+            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
+            innerPoints[i] = center + direction * innerRadius;
+            outerPoints[i] = center + direction * outerRadius;
+        }
+
+        Gizmos.color = detectionZoneColor;
+
+        // Draw rectangles between inner and outer arc segments
+        for (int i = 0; i < semicircleSegments; i++)
+        {
+            // Draw a quad (rectangle) between segment i and i+1
+            DrawQuad(
+                innerPoints[i] + offset,
+                innerPoints[i + 1] + offset,
+                outerPoints[i + 1] + offset,
+                outerPoints[i] + offset
+            );
+        }
+    }
+
+    /// <summary>
+    /// Draws just the outline of a semicircle (arc and radial lines).
+    /// </summary>
+    /// <param name="center">Center position of the semicircle</param>
+    /// <param name="forward">Forward direction of the NPC</param>
+    /// <param name="radius">Radius of the semicircle</param>
+    /// <param name="angle">Total angle of the semicircle</param>
+    private void DrawSemicircleOutline(Vector3 center, Vector3 forward, float radius, float angle)
+    {
+        // Flatten forward to XZ plane
+        forward.y = 0;
+        forward.Normalize();
+
+        // Calculate the half angle in radians
+        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
+
+        // Create points for the semicircle
+        Vector3[] points = new Vector3[semicircleSegments + 1];
+
+        for (int i = 0; i <= semicircleSegments; i++)
+        {
+            float t = (float)i / semicircleSegments;
+            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
+            
+            // Rotate the forward vector by the current angle around Y axis
+            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
+            points[i] = center + direction * radius;
+        }
+
+        Gizmos.color = detectionZoneColor;
+
+        // Draw arc segments
+        for (int i = 0; i < semicircleSegments; i++)
+        {
+            Gizmos.DrawLine(points[i] + offset, points[i + 1] + offset);
+        }
+
+        // Draw lines from center to the arc edges
+        Gizmos.DrawLine(center + offset, points[0] + offset);
+        Gizmos.DrawLine(center + offset, points[semicircleSegments] + offset);
+    }
+
+    /// <summary>
+    /// Draws a quad (4-sided polygon) by drawing lines between the four corners.
+    /// </summary>
+    private void DrawQuad(Vector3 p1, Vector3 p2, Vector3 p3, Vector3 p4)
+    {
+        Gizmos.DrawLine(p1, p2);
+        Gizmos.DrawLine(p2, p3);
+        Gizmos.DrawLine(p3, p4);
+        Gizmos.DrawLine(p4, p1);
     }
 
     /// <summary>

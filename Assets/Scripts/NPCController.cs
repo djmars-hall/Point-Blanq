@@ -29,17 +29,14 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     // Public getter to expose the micro state
     public NPCStatesMicro MicroState => microState;
     
-    Vector3 current_waypoint;
     float waypoint_time;
-    private List<Vector3> pathCorners = new List<Vector3>();
-    public List<Vector3> PathCorners => pathCorners;
+
+    // Pathway system
+    private NPCPathway pathway;
+    public NPCPathway Pathway => pathway;
 
     // Spatial grid tracking
     private Vector2Int currentCell;
-    
-    // Previous corner position for zone orientation
-    private Vector3 previousCornerPosition;
-    public Vector3 PreviousCornerPosition => previousCornerPosition;
 
     [Header("Generic NPC Behavior Settings")]
     [SerializeField] private float npcWalkingSpeed = 1f; // Walking speed of the NPC
@@ -63,7 +60,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     [SerializeField] private float edgeCheckAheadDistance = 2f; // How far ahead to check for edges
     [SerializeField] private int maxRaycastAttempts = 24; // Maximum number of raycast attempts (alternating left/right)
     [SerializeField] private float raycastAngleIncrement = 5f; // Angle increment for each raycast attempt
-    [SerializeField] private float edgeTurnSpeed = 2f; // Speed multiplier when turning away from edges...should I have this?
 
     // Tracks detected characters and their avoidance intensity (0.0 to 1.0+)
     // Key: detected character, Value: avoidance intensity
@@ -72,6 +68,15 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     // Tracks if we are currently tailgating someone (set by CalculateCharacterAvoidance)
     private bool isTailgating = false;
+    
+    // Tracks the closest distance to a character we're tailgating (for proportional slowdown)
+    private float closestTailgatingDistance = float.MaxValue;
+
+    // Tracks if we are currently in a head-on collision scenario (set by CalculateCharacterAvoidance)
+    private bool isInHeadOnCollision = false;
+    
+    // Speed multiplier for head-on collisions (1.0 = full speed, 0.3 = 30% speed for less assertive)
+    private float headOnSpeedReduction = 1.0f;
 
     // <==========================================================>
     // Public getters for edge avoidance settings
@@ -90,8 +95,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     // Public getters for edge avoidance settings
     // <==========================================================>
 
-    private float pathEdgeBuffer = 0.6f; // Distance to keep from edges when adjusting corners
-
     // Object Pooling
     public static ObjectPool<NPCController> objectPool = new ObjectPool<NPCController>(128);
 
@@ -102,6 +105,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     protected override void Awake() 
     { 
         base.Awake();
+        pathway = new NPCPathway(this);
         Debug.Log(NetworkManager.Singleton.PrefabHandler.AddHandler(gameObject, this));
         if (IsPoolable) objectPool.RegisterSpawnable(this); 
     }
@@ -258,6 +262,9 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
         Vector3 avoidanceVector = Vector3.zero;
         isTailgating = false; // Reset at the start of each calculation
+        closestTailgatingDistance = float.MaxValue; // Reset closest distance
+        isInHeadOnCollision = false; // Reset head-on collision state
+        headOnSpeedReduction = 1.0f; // Reset speed reduction (default: full speed)
 
         // Create a copy of the keys to iterate over (allows safe modification of dictionary values)
         var detectedCharactersList = new List<BaseCharController>(detectedCharacterIntensities.Keys);
@@ -335,6 +342,25 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             }
             // If stationary, otherApproachDot stays 0, meaning they're not approaching
 
+            // Check if we're both heading in the same direction (parallel movement)
+            // Dot product close to 1.0 means same direction
+            float sameDirectionDot = 0f;
+            bool movingInSameDirection = false;
+            if (!otherIsStationary)
+            {
+                sameDirectionDot = Vector3.Dot(myForward, otherHeading);
+                movingInSameDirection = sameDirectionDot > 0.7f; // If heading directions are similar (within ~45 degrees)
+            }
+
+            // Check if the other character is in FRONT of us or BESIDE us
+            // This is key for distinguishing tailgating (behind them) from parallel walking (beside them)
+            bool otherIsInFront = myApproachDot > 0.5f; // They're significantly in front of our forward direction
+            
+            // Calculate perpendicular distance (how far to the side they are)
+            Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+            float lateralDistance = Mathf.Abs(Vector3.Dot(perpendicular, toOtherNormalized));
+            bool otherIsBeside = lateralDistance > 0.5f; // They're significantly to the side
+
             // Calculate relative heading: are we on a collision course?
             // If both are moving toward each other, this will be high
             // If one is moving away or perpendicular, this will be low
@@ -342,16 +368,22 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             float collisionThreat = myApproachDot * Mathf.Max(0f, otherApproachDot);
 
             // Determine if this is a head-on collision (both moving toward each other)
-            bool isHeadOn = !otherIsStationary && otherApproachDot > 0.3f;
+            // FIXED: More strict threshold (0.5 instead of 0.3) and also check that we're approaching them
+            bool isHeadOn = !otherIsStationary && otherApproachDot > 0.5f && myApproachDot > 0.5f;
             
-            // Determine if we're following/tailgating (both moving in similar direction but too close)
-            bool isTailgatingThisCharacter = isTooClose && myApproachDot > 0.1f && otherApproachDot < 0.3f;
+            // Determine if we're following/tailgating (behind someone moving in same direction)
+            // Key change: Only tailgate if they're IN FRONT of us, we're too close, and moving same direction
+            bool isTailgatingThisCharacter = isTooClose && otherIsInFront && movingInSameDirection && !otherIsBeside;
+
+            // NEW: Check if we're moving parallel (beside someone moving in same direction)
+            // In this case, maintain lateral distance but DON'T slow down
+            bool parallelAndTooClose = isTooClose && movingInSameDirection && otherIsBeside;
 
             // For stationary characters, if we're too close we should avoid them
             bool approachingStationary = otherIsStationary && (isTooClose || myApproachDot > 0.1f);
 
-            // If there's no significant collision threat and we're not tailgating and not approaching a stationary character, skip
-            if (collisionThreat < 0.05f && !isTailgatingThisCharacter && !approachingStationary)
+            // If there's no significant collision threat and we're not tailgating and not approaching a stationary character and not parallel-too-close, skip
+            if (collisionThreat < 0.05f && !isTailgatingThisCharacter && !approachingStationary && !parallelAndTooClose)
             {
                 // Set intensity to 0 (detected but not avoided)
                 detectedCharacterIntensities[otherCharacter] = 0.0f;
@@ -386,6 +418,12 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 // For stationary characters, use a moderate avoidance factor
                 avoidanceFactor *= Mathf.Max(0.5f, myApproachDot);
             }
+            else if (parallelAndTooClose)
+            {
+                // For parallel movement that's too close, use moderate avoidance
+                // This will create lateral separation without triggering slowdown
+                avoidanceFactor *= 0.8f;
+            }
             else
             {
                 avoidanceFactor *= Mathf.Max(0.3f, collisionThreat); // Minimum 30% factor for tailgating
@@ -399,32 +437,58 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             if (isHeadOn)
             {
                 avoidanceFactor *= 2.0f;
+                
+                // Track that we're in a head-on collision
+                isInHeadOnCollision = true;
+                
+                // If we're less assertive, reduce our speed to yield more effectively
+                if (otherCharacter.AssertivenessLevel > assertivenessLevel)
+                {
+                    // We are less assertive, slow down to 30% speed
+                    headOnSpeedReduction = 0.3f;
+                }
+                // If we're more assertive, maintain full speed (already at 1.0f)
+                // If equal assertiveness, both maintain full speed and move to the side
             }
-            // For tailgating, apply moderate boost
+            // For tailgating, apply moderate boost and track closest distance
             else if (isTailgatingThisCharacter)
             {
                 avoidanceFactor *= 1.3f;
                 isTailgating = true; // Set the field if we are tailgating ANYONE right now
-            }
-
-            // Consider assertiveness: binary decision - either yield or don't yield
-            if (otherCharacter.AssertivenessLevel > assertivenessLevel)
-            {
-                // We are less assertive, so we yield (apply full avoidance)
-                // avoidanceFactor remains unchanged
-            }
-            else if (otherCharacter.AssertivenessLevel < assertivenessLevel)
-            {
-                // We are more assertive, so we don't yield (skip this character)
-                // Exception: If tailgating or approaching stationary, still avoid (move to the side)
-                if (!isTailgatingThisCharacter && !approachingStationary)
+                
+                // Track the closest tailgating distance for proportional slowdown
+                if (distance < closestTailgatingDistance)
                 {
-                    // Set intensity to 0 (detected but not avoided due to assertiveness)
-                    detectedCharacterIntensities[otherCharacter] = 0.0f;
-                    continue;
+                    closestTailgatingDistance = distance;
                 }
             }
-            // If assertiveness is equal, both will avoid each other (default behavior)
+            // For parallel movement, don't boost - just maintain lateral distance
+            // (no special handling needed, avoidanceFactor is already set)
+
+            // FIXED: Consider assertiveness but ALWAYS avoid in head-on collisions
+            // In head-on situations, assertiveness only determines which side to move to, not whether to avoid
+            if (!isHeadOn)
+            {
+                // Normal assertiveness logic (not head-on)
+                if (otherCharacter.AssertivenessLevel > assertivenessLevel)
+                {
+                    // We are less assertive, so we yield (apply full avoidance)
+                    // avoidanceFactor remains unchanged
+                }
+                else if (otherCharacter.AssertivenessLevel < assertivenessLevel)
+                {
+                    // We are more assertive, so we don't yield (skip this character)
+                    // Exception: If tailgating or approaching stationary or parallel-too-close, still avoid (move to the side)
+                    if (!isTailgatingThisCharacter && !approachingStationary && !parallelAndTooClose)
+                    {
+                        // Set intensity to 0 (detected but not avoided due to assertiveness)
+                        detectedCharacterIntensities[otherCharacter] = 0.0f;
+                        continue;
+                    }
+                }
+                // If assertiveness is equal, both will avoid each other (default behavior)
+            }
+            // If it IS head-on, we skip the assertiveness check and ALWAYS avoid
 
             // Store normalized avoidance intensity (0.0 to 1.0+)
             // Intensity considers: distance, collision threat, urgency, scenario type
@@ -439,7 +503,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             {
                 // Use assertiveness to deterministically choose which side to move to
                 // This ensures both NPCs don't pick the same side
-                Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
                 
                 // Determine side based on assertiveness comparison
                 // Lower assertiveness moves right, higher moves left
@@ -452,35 +516,60 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
                 }
                 else
                 {
-                    // Equal assertiveness: use position as tiebreaker
-                    // Check which side the other character is on relative to our forward direction
-                    float sideChoice = Vector3.Dot(perpendicular, toOtherNormalized);
-                    moveRight = sideChoice > 0;
+                    // FIXED: Equal assertiveness - move AWAY from where they are
+                    // If they're on our right (sideChoice > 0), we move left (moveRight = false)
+                    // If they're on our left (sideChoice < 0), we move right (moveRight = true)
+                    float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
+                    moveRight = sideChoice < 0; // INVERTED: move opposite to their position
                 }
                 
-                avoidanceDirection = moveRight ? perpendicular : -perpendicular;
+                avoidanceDirection = moveRight ? perpendicularVec : -perpendicularVec;
             }
             // For tailgating scenarios, move to the side to pass
             else if (isTailgatingThisCharacter)
             {
-                Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
                 
                 // Use assertiveness to choose passing side
                 // More assertive passes on the left, less assertive on the right
                 bool moveRight = assertivenessLevel <= otherCharacter.AssertivenessLevel;
                 
-                avoidanceDirection = moveRight ? perpendicular : -perpendicular;
+                avoidanceDirection = moveRight ? perpendicularVec : -perpendicularVec;
+                
+                // Also add a slight backward component to maintain distance while tailgating
+                // This helps maintain avoidanceDistance when following directly behind
+                if (distance < avoidanceDistance)
+                {
+                    // Mix lateral avoidance with backward push to maintain distance
+                    float backwardComponent = (avoidanceDistance - distance) / avoidanceDistance;
+                    avoidanceDirection = avoidanceDirection * 0.7f + (-toOtherNormalized) * backwardComponent * 0.3f;
+                    avoidanceDirection.Normalize();
+                }
+            }
+            // For parallel movement (same direction, too close), move to the side ONLY
+            else if (parallelAndTooClose)
+            {
+                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
+                
+                // Choose the side based on which side they're on relative to our path
+                float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
+                bool moveRight = sideChoice > 0;
+                
+                avoidanceDirection = moveRight ? -perpendicularVec : perpendicularVec;
+                
+                // IMPORTANT: No backward component - we want to maintain speed
+                // Just create lateral separation
             }
             // For stationary characters, move to the side
             else if (approachingStationary)
             {
-                Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
+                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
                 
                 // Choose the side based on which side they're on relative to our path
-                float sideChoice = Vector3.Dot(perpendicular, toOtherNormalized);
+                float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
                 bool moveRight = sideChoice > 0;
                 
-                avoidanceDirection = moveRight ? -perpendicular : perpendicular;
+                avoidanceDirection = moveRight ? -perpendicularVec : perpendicularVec;
             }
             else
             {
@@ -500,124 +589,11 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
     private void NewWaypoint()
     {
-        var zones = NPCManager.Instance.gatheringZones;
-        if (zones == null || zones.Length == 0) return;
-
-        // Pick a random gathering zone
-        MapZone zone = zones[Random.Range(0, zones.Length)];
-
-        // Use a random point within the zone as the waypoint
-        Vector3 targetPoint = zone.GetRandomPointInArea();
-
-        NavMeshHit hit;
-        if (NavMesh.SamplePosition(targetPoint, out hit, 5f, NavMesh.AllAreas))
+        if (pathway.GenerateNewWaypoint(out float newWaypointTime))
         {
-            current_waypoint = hit.position;
-            NavMeshPath pathReturned = new NavMeshPath();
-            NavMesh.CalculatePath(transform.position, current_waypoint, NavMesh.AllAreas, pathReturned);
-            pathCorners = new List<Vector3>(pathReturned.corners);
-            pathCorners = AdjustCornersAwayFromEdges(pathCorners);
-            previousCornerPosition = transform.position;
-            waypoint_time = Random.Range(3.0f, 12.0f);
+            waypoint_time = newWaypointTime;
             microState = NPCStatesMicro.Walking;
         }
-    }
-
-    /// <summary>
-    /// Adjusts path corners to maintain a minimum distance from NavMesh edges.
-    /// Samples in multiple directions around each corner to find positions further from edges.
-    /// </summary>
-    /// <param name="corners">Original path corners from NavMesh</param>
-    /// <param name="minDistanceFromEdge">Minimum desired distance from edges</param>
-    /// <returns>List of adjusted corner positions</returns>
-    private List<Vector3> AdjustCornersAwayFromEdges(List<Vector3> corners)
-    {
-        List<Vector3> adjustedCorners = new List<Vector3>();
-
-        for (int i = 0; i < corners.Count; i++)
-        {
-            Vector3 corner = corners[i];
-            Vector3 adjustedCorner = corner;
-            
-            // Check if this corner is too close to an edge
-            NavMeshHit edgeHit;
-            if (NavMesh.FindClosestEdge(corner, out edgeHit, NavMesh.AllAreas))
-            {
-                float distToEdge = edgeHit.distance;
-
-                SpawnMarker(edgeHit.position, i, " Edge Hit. Too Close?");
-
-                // Check if the corner is too close to the edge.
-                if (distToEdge < pathEdgeBuffer)
-                {
-                    SpawnMarker(corner, i, " TOO CLOSE!!!");
-
-                    // Calculate direction away from edge
-                    Vector3 pushDirection = edgeHit.normal;
-                    
-                    // Calculate how much farther we need to push (plus a little to offset)
-                    float deficit = (pathEdgeBuffer - distToEdge) + 0.2f;
-                    
-                    // Calculate the new position
-                    Vector3 newPosition = corner + pushDirection * deficit;
-
-                    SpawnMarker(newPosition, i, " New Position.");
-
-                    // Re-sample the new position on the NavMesh to ensure it is valid.
-                    NavMeshHit newHit;
-                    if (NavMesh.SamplePosition(newPosition, out newHit, pathEdgeBuffer * 2, NavMesh.AllAreas))
-                    {
-                        adjustedCorner = AdjustForOverCorrection(newHit.position, i);
-                        SpawnMarker(adjustedCorner, i, " Corrected Pos");
-                    }
-                }
-            }
-            
-            adjustedCorners.Add(adjustedCorner);
-        }
-        
-        return adjustedCorners;
-    }
-
-    private Vector3 AdjustForOverCorrection(Vector3 generatedPoint, int order)
-    {
-        NavMeshHit edgeHit;
-        if (NavMesh.FindClosestEdge(generatedPoint, out edgeHit, NavMesh.AllAreas))
-        {
-            float distToEdge = edgeHit.distance;
-
-            SpawnMarker(edgeHit.position, order, " Edge Hit. Overcorrection?");
-
-            if (distToEdge < pathEdgeBuffer)
-            {
-                //Generate a new point, then take the average of the two
-                SpawnMarker(edgeHit.position, order, " TOO CLOSE!!! OverCorrection!");
-
-                // Calculate direction away from edge
-                Vector3 pushDirection = edgeHit.normal;
-
-                // Calculate how much farther we need to push
-                float deficit = pathEdgeBuffer - distToEdge;
-
-                // Calculate the new position (in between corrected position and newly generated position)
-                Vector3 newPosition = ((generatedPoint + pushDirection * deficit) + generatedPoint) / 2;
-
-                SpawnMarker(newPosition, order, " New Position. Corrected!");
-
-                // Re-sample the new position on the NavMesh to ensure it is valid.
-                NavMeshHit newHit;
-                if (NavMesh.SamplePosition(newPosition, out newHit, pathEdgeBuffer * 2, NavMesh.AllAreas))
-                {
-                    return newHit.position;
-                }
-            }
-            else
-            {
-                return generatedPoint;
-            }
-
-        }
-        throw new System.Exception("AdjustForOverCorrection failed to find edge!");
     }
 
     /// <summary>
@@ -629,48 +605,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     {
         if (followPathCorners)
         {
-            // Calculate the closest point in the corner zone to aim for
-            Vector3 cornerPosition = pathCorners[0];
-            Vector3 npcPosition = transform.position;
-            
-            // Flatten to XZ plane
-            cornerPosition.y = 0;
-            npcPosition.y = 0;
-            
-            // Calculate path direction
-            Vector3 prevCorner = previousCornerPosition;
-            prevCorner.y = 0;
-            Vector3 pathDirection = (cornerPosition - prevCorner).normalized;
-            
-            // Calculate perpendicular direction (left/right of path)
-            Vector3 perpendicular = Vector3.Cross(pathDirection, Vector3.up).normalized;
-            
-            // Get half width of the corner zone
-            float halfWidth = cornerZoneSize.x * 0.5f;
-            
-            // Three candidate points: center, left edge, right edge of corner zone
-            Vector3 centerPoint = cornerPosition;
-            Vector3 leftPoint = cornerPosition + perpendicular * halfWidth;
-            Vector3 rightPoint = cornerPosition - perpendicular * halfWidth;
-            
-            // Find which point is closest
-            float distToCenter = Vector3.Distance(npcPosition, centerPoint);
-            float distToLeft = Vector3.Distance(npcPosition, leftPoint);
-            float distToRight = Vector3.Distance(npcPosition, rightPoint);
-            
-            Vector3 targetPoint = centerPoint;
-            if (distToLeft < distToCenter && distToLeft < distToRight)
-            {
-                targetPoint = leftPoint;
-            }
-            else if (distToRight < distToCenter && distToRight < distToLeft)
-            {
-                targetPoint = rightPoint;
-            }
-            
-            Vector3 toCorner = targetPoint - npcPosition;
-            toCorner.y = 0;
-            return toCorner.normalized;
+            return pathway.CalculateTargetDirection();
         }
         else
         {
@@ -684,7 +619,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     /// </summary>
     /// <param name="rotationDir">Reference to rotation direction to modify</param>
     /// <param name="movementSpeed">Reference to movement speed to modify</param>
-    /// <returns>True if movement should continue, false if state changed to Turning</returns>
+    /// <returns>True if movement should continue, false if no safe direction found</returns>
     private bool HandleEdgeAvoidance(ref float rotationDir, ref float movementSpeed)
     {
         if (!enableEdgeAvoidance)
@@ -706,60 +641,49 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             }
             else
             {
-                // No safe direction found after all attempts: enter Turning state
-                microState = NPCStatesMicro.Turning;
-                Debug.Log($"[{name}] No safe direction found due to edges, entering Turning state");
-                return false; // Don't continue with movement
+                // No safe direction found after all attempts: stop movement
+                movementSpeed = 0f;
+                // Try turning right as a fallback
+                rotationDir = 1f;
+                Debug.LogWarning($"[{name}] No safe direction found due to edges, stopping movement and turning right THIS NEEDS TO BE OVERRIDEN AT SOME POINT");
             }
         }
         
-        return true; // Continue with normal movement
+        return true; // Continue with movement
     }
 
     private void DecideMovement()
     {
-        //check if at end of pathway
-        if (pathCorners.Count == 0)
+        // Only do pathway-related checks if we're following path corners
+        if (followPathCorners)
         {
-            //we made it to the end of the path
-            microState = NPCStatesMicro.Standing;
-            return;
-        }
-
-        // Check if NPC is inside the corner visitation zone
-        if (IsInsideCornerZone(0))
-        {
-            // Update previous corner position before removing the corner
-            previousCornerPosition = pathCorners[0];
-            pathCorners.RemoveAt(0);
-            //check if at end of pathway AGAIN
-            if (pathCorners.Count == 0)
+            //redundant check if at end of pathway
+            if (pathway.GetCornerCount() == 0)
             {
                 //we made it to the end of the path
                 microState = NPCStatesMicro.Standing;
                 return;
             }
-        }
 
-        // Check if we're closer to the next corner than the current one (corner-cutting optimization)
-        if (pathCorners.Count > 1)
-        {
-            float distToCurrent = Vector3.Distance(pathCorners[0], transform.position);
-            float distToNext = Vector3.Distance(pathCorners[1], transform.position);
-            float distFromCurrentToNext = Vector3.Distance(pathCorners[0], pathCorners[1]);
-
-            if (distToNext < distToCurrent)
+            // Check if the next corner is behind the NPC - if so, stop and turn around
+            if (pathway.IsNextCornerBehind())
             {
-                // Skip the current corner since we're already closer to the next one
-                previousCornerPosition = pathCorners[0];
-                pathCorners.RemoveAt(0);
+                microState = NPCStatesMicro.Turning;
+                Debug.Log($"[{name}] Next corner is behind, entering Turning state");
+                return;
             }
-            else if(distToNext < distFromCurrentToNext)
+
+            // Check if NPC is inside the corner visitation zone
+            if (pathway.ProcessCornerVisitation())
             {
-                // Skip the current corner since we're on our way to the next one
-                // This could cause NPCs to walk through walls - recalculate path to prevent this
-                UnityEngine.Debug.Log($"[{name}] Corner skipped, recalculating path to current waypoint to avoid walls");
-                RecalculatePathToCurrentWaypoint();
+                //we made it to the end of the path
+                microState = NPCStatesMicro.Standing;
+                return;
+            }
+
+            // Check if we're closer to the next corner than the current one (corner-cutting optimization)
+            if (pathway.ProcessCornerCuttingOptimization())
+            {
                 return; // Exit early - path has been recalculated, will use new path next frame
             }
         }
@@ -802,11 +726,30 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         // Adjust speed based on situation
         if (isTailgating)
         {
-            movementSpeed *= 0.5f; // Slow down to 50% when tailgating
+            // Calculate proportional slowdown based on distance to the closest character we're tailgating
+            // At half avoidanceDistance (e.g., 0.75m): stop completely (0%)
+            // At full avoidanceDistance (e.g., 1.5m): slow to 50%
+            // Between these: linear interpolation
+            
+            float minSlowdownDistance = avoidanceDistance * 0.5f; // Distance at which we stop (0% speed)
+            float maxSlowdownDistance = avoidanceDistance;         // Distance at which we're at 50% speed
+            
+            // Clamp the distance to the range
+            float clampedDistance = Mathf.Clamp(closestTailgatingDistance, minSlowdownDistance, maxSlowdownDistance);
+            
+            // Calculate speed multiplier: 0.0 at minSlowdownDistance, 0.5 at maxSlowdownDistance
+            float speedMultiplier = Mathf.Lerp(0.0f, 0.5f, (clampedDistance - minSlowdownDistance) / (maxSlowdownDistance - minSlowdownDistance));
+            
+            movementSpeed *= speedMultiplier;
+        }
+        else if (isInHeadOnCollision && headOnSpeedReduction > 0f)
+        {
+            // Apply head-on collision speed reduction (set by CalculateCharacterAvoidance)
+            movementSpeed *= headOnSpeedReduction;
         }
         else if (avoidanceForce.magnitude > 0.1f)
         {
-            movementSpeed *= 0.7f; // Slow down to 70% when avoiding
+            //movementSpeed *= 0.7f; // Slow down to 70% when avoiding
         }
 
         // Check for edge avoidance
@@ -817,32 +760,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
 
         // Execute movement with the calculated rotation
         ProcessMovement(movementSpeed, rotationDir);
-    }
-
-    /// <summary>
-    /// Recalculates the path to the current waypoint without changing the destination.
-    /// Used when the NPC skips a corner to prevent potential wall-walking.
-    /// </summary>
-    private void RecalculatePathToCurrentWaypoint()
-    {
-        if (current_waypoint == Vector3.zero)
-        {
-            Debug.LogWarning($"[{name}] Cannot recalculate path - no current waypoint set");
-            return;
-        }
-
-        NavMeshPath pathReturned = new NavMeshPath();
-        if (NavMesh.CalculatePath(transform.position, current_waypoint, NavMesh.AllAreas, pathReturned))
-        {
-            pathCorners = new List<Vector3>(pathReturned.corners);
-            pathCorners = AdjustCornersAwayFromEdges(pathCorners);
-            previousCornerPosition = transform.position;
-            Debug.Log($"[{name}] Path recalculated successfully with {pathCorners.Count} corners");
-        }
-        else
-        {
-            Debug.LogWarning($"[{name}] Failed to recalculate path to current waypoint");
-        }
     }
 
     /// <summary>
@@ -872,7 +789,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             // Check if this direction is safe - return immediately if found
             if (IsDirectionSafe(checkDirection))
             {
-                Debug.Log($"[{name}] Found safe direction at {checkAngle}° ({(checkAngle > 0 ? "right" : "left")}) after {i} attempts");
+                //Debug.Log($"[{name}] Found safe direction at {checkAngle}° ({(checkAngle > 0 ? "right" : "left")}) after {i} attempts");
                 return checkAngle;
             }
         }
@@ -926,65 +843,41 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     }
 
     /// <summary>
-    /// Continuously turns the NPC right until a safe direction for movement is found.
-    /// Once a safe direction is found, transitions back to Walking state.
+    /// Continuously turns the NPC until the next corner is in front of them.
+    /// Turns in the most efficient direction (shortest rotation path) to face the corner.
+    /// Once the corner is in front, transitions back to Walking state.
     /// </summary>
     private void TurnUntilSafeDirection()
     {
-        // Check if current forward direction is safe
+        // Check if the corner is now in front of us
+        bool cornerIsInFront = !pathway.IsNextCornerBehind();
+
+        if (cornerIsInFront)
+        {
+            // Corner is now in front, return to walking state
+            microState = NPCStatesMicro.Walking;
+            Debug.Log($"[{name}] Corner is now in front, returning to Walking state");
+            return;
+        }
+
+        // Calculate which direction to turn (shortest path to face the corner)
+        Vector3 toCorner = pathway.PathCorners[0] - transform.position;
+        toCorner.y = 0;
+        toCorner.Normalize();
+
         Vector3 forward = transform.forward;
         forward.y = 0;
         forward.Normalize();
 
-        if (IsDirectionSafe(forward))
-        {
-            // Found a safe direction, return to walking state
-            microState = NPCStatesMicro.Walking;
-            Debug.Log($"[{name}] Found safe direction, returning to Walking state");
-            return;
-        }
+        // Calculate signed angle to determine turn direction
+        // Positive = turn right, Negative = turn left
+        float signedAngle = Vector3.SignedAngle(forward, toCorner, Vector3.up);
+        
+        // Determine rotation direction based on signed angle
+        float rotationDir = signedAngle > 0 ? 1f : -1f;
 
-        // Continue turning right (no forward movement)
-        ProcessMovement(0f, 1f);
-    }
-
-    private bool IsInsideCornerZone(int cornerIndex)
-    {
-        if (cornerIndex >= pathCorners.Count)
-            return false;
-
-        Vector3 cornerPosition = pathCorners[cornerIndex];
-        Vector3 npcPosition = transform.position;
-
-        // Flatten positions to XZ plane
-        cornerPosition.y = 0;
-        npcPosition.y = 0;
-
-        // Calculate the direction from previous corner position to this corner
-        Vector3 prevCorner = previousCornerPosition;
-        prevCorner.y = 0;
-        Vector3 pathDirection = (cornerPosition - prevCorner).normalized;
-
-        // Calculate local position of NPC relative to corner
-        Vector3 toNPC = npcPosition - cornerPosition;
-
-        // Calculate perpendicular direction (left/right of path)
-        Vector3 perpendicular = Vector3.Cross(pathDirection, Vector3.up).normalized;
-
-        // Project NPC position onto path direction and perpendicular
-        float alongPath = Vector3.Dot(toNPC, pathDirection);
-        float acrossPath = Vector3.Dot(toNPC, perpendicular);
-
-        // Check if within zone bounds
-        // alongPath: distance along the path direction (depth of zone)
-        // acrossPath: distance perpendicular to path (width of zone)
-        float halfDepth = cornerZoneSize.y * 0.5f;
-        float halfWidth = cornerZoneSize.x * 0.5f;
-
-        bool withinDepth = Mathf.Abs(alongPath) <= halfDepth;
-        bool withinWidth = Mathf.Abs(acrossPath) <= halfWidth;
-
-        return withinDepth && withinWidth;
+        // Continue turning in the calculated direction (no forward movement)
+        ProcessMovement(0f, rotationDir);
     }
 
     [Rpc(SendTo.Everyone)]
@@ -1021,7 +914,7 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     /// <param name="spawnPos"></param>
     /// <param name="order"></param>
     /// <param name="label"></param>
-    private void SpawnMarker(Vector3 spawnPos, int order, string label)
+    public void SpawnDebugMarker(Vector3 spawnPos, int order, string label)
     {
         //GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
         //cube.transform.localScale = Vector3.one * 0.5f;

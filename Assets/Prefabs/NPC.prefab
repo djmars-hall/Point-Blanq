@@ -401,10 +401,18 @@ MonoBehaviour:
   npcWalkingSpeed: 1
   followPathCorners: 0
   cornerZoneSize: {x: 3.5, y: 0.5}
+  rvoTimeHorizon: 2.5
+  rvoAgentRadius: 0.75
+  rvoResponsibility: 0.5
+  rvoFlowBias: 0.3
+  useAdaptiveTimeHorizon: 1
+  minTimeHorizon: 1.5
+  maxTimeHorizon: 3.5
+  personalSpaceMultiplier: 1.2
+  velocitySmoothingFactor: 0.3
   detectionRadius: 5
   detectionAngle: 270
   enableNPCDetection: 1
-  avoidanceStrength: 1.5
   avoidanceDistance: 2
   enableEdgeAvoidance: 1
   edgeDetectionDistance: 0.5
@@ -447,19 +455,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 262cb74951e10844abeac7704235974d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  onlyShowWhenSelected: 0
+  onlyShowWhenSelected: 1
   showPaths: 0
   gizmoColor: {r: 1, g: 0, b: 1, a: 1}
   gizmoRadius: 0.4
   cornerZoneColor: {r: 1, g: 0, b: 1, a: 0.3}
   showDetectionZone: 1
-  showAvoidanceDistanceBoundary: 1
   showDetectedCharacterLines: 1
   detectionZoneColor: {r: 0, g: 1, b: 1, a: 0.2}
   detectionLineColor: {r: 1, g: 0.015686274, b: 0.07114695, a: 1}
   npcDirectionColor: {r: 0, g: 0.087194204, b: 1, a: 1}
   arrowSize: 0.25
   semicircleSegments: 30
+  showCollisionPredictions: 1
+  showCandidateVelocities: 0
+  showDensityInfo: 0
 --- !u!54 &6086016695829236127
 Rigidbody:
   m_ObjectHideFlags: 0

@@ -17,13 +17,18 @@ public class NPCGizmoGenerator : MonoBehaviour
 
     [Header("NPC Detection Gizmo Settings")]
     [SerializeField] private bool showDetectionZone = true;
-    [SerializeField] private bool showAvoidanceDistanceBoundary = true;
     [SerializeField] private bool showDetectedCharacterLines = true;
     [SerializeField] private Color detectionZoneColor = Color.cyan;
     [SerializeField] private Color detectionLineColor = Color.red;
     [SerializeField] private Color npcDirectionColor = Color.blue;
     [SerializeField] private float arrowSize = 0.5f;
     [SerializeField] private int semicircleSegments = 30; // Number of segments to draw the semicircle
+
+    [Header("RVO Debug Visualization")]
+    [Tooltip("Show collision trajectories and predictions for each neighbor")]
+    [SerializeField] private bool showCollisionPredictions = true;
+    [Tooltip("Show sampled candidate velocities in Scene View")]
+    [SerializeField] private bool showCandidateVelocities = false;
 
     private NPCController npcController;
 
@@ -49,14 +54,25 @@ public class NPCGizmoGenerator : MonoBehaviour
         DrawPathGizmos();
         DrawDetectionGizmos();
         DrawEdgeAvoidanceGizmos();
+
+        //Draw velocity arrows
+        DrawVelocityArrows();
+
+        // Draw RVO collision predictions if enabled
+        DrawRVOCollisionPredictions();
+
+        // Draw candidate velocities if enabled
+        DrawCandidateVelocities();
     }
 
     private void DrawPathGizmos()
     {
+        //Return Conditionals
         if (!showPaths) return;
-        
         pathCorners = npcController.Pathway.PathCorners;
         if (pathCorners == null || pathCorners.Count == 0) return;
+
+
         Gizmos.color = gizmoColor;
 
         Vector3 previousCornerPosition = npcController.Pathway.PreviousCornerPosition;
@@ -108,7 +124,8 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// </summary>
     private void DrawDetectionGizmos()
     {
-        if (!showDetectionZone && !showAvoidanceDistanceBoundary && !showDetectedCharacterLines) return;
+        //Return Conditionals
+        if (!showDetectionZone && !showDetectedCharacterLines) return;
 
         Vector3 position = transform.position;
         Vector3 forward = transform.forward;
@@ -120,12 +137,6 @@ public class NPCGizmoGenerator : MonoBehaviour
         if (showDetectionZone)
         {
             DrawSemicircleRectangles(position, forward, avoidanceRadius, radius, angle);
-        }
-        
-        // Draw the avoidance distance boundary (outline only)
-        if (showAvoidanceDistanceBoundary)
-        {
-            DrawSemicircleOutline(position, forward, avoidanceRadius, angle);
         }
 
         // Draw the detection radius boundary (outline only)
@@ -196,6 +207,54 @@ public class NPCGizmoGenerator : MonoBehaviour
     }
 
     /// <summary>
+    /// Generates arc points for a semicircle.
+    /// </summary>
+    /// <param name="center">Center position of the semicircle</param>
+    /// <param name="forward">Forward direction of the NPC</param>
+    /// <param name="radius">Radius of the semicircle</param>
+    /// <param name="angle">Total angle of the semicircle</param>
+    /// <returns>Array of points along the arc</returns>
+    private Vector3[] GenerateArcPoints(Vector3 center, Vector3 forward, float radius, float angle)
+    {
+        // Flatten forward to XZ plane
+        forward.y = 0;
+        forward.Normalize();
+
+        // Calculate the half angle in radians
+        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
+
+        // Create points for the semicircle
+        Vector3[] points = new Vector3[semicircleSegments + 1];
+
+        for (int i = 0; i <= semicircleSegments; i++)
+        {
+            float t = (float)i / semicircleSegments;
+            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
+            
+            // Rotate the forward vector by the current angle around Y axis
+            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
+            points[i] = center + direction * radius;
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// Draws arc segments connecting an array of points.
+    /// </summary>
+    /// <param name="points">Array of points to connect</param>
+    /// <param name="applyOffset">Whether to apply the vertical offset</param>
+    private void DrawArcSegments(Vector3[] points, bool applyOffset = true)
+    {
+        Vector3 offsetToApply = applyOffset ? offset : Vector3.zero;
+        
+        for (int i = 0; i < points.Length - 1; i++)
+        {
+            Gizmos.DrawLine(points[i] + offsetToApply, points[i + 1] + offsetToApply);
+        }
+    }
+
+    /// <summary>
     /// Draws rectangles between the inner and outer semicircles to create a detection zone band.
     /// </summary>
     /// <param name="center">Center position of the semicircles</param>
@@ -205,27 +264,9 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// <param name="angle">Total angle of the semicircle</param>
     private void DrawSemicircleRectangles(Vector3 center, Vector3 forward, float innerRadius, float outerRadius, float angle)
     {
-        // Flatten forward to XZ plane
-        forward.y = 0;
-        forward.Normalize();
-
-        // Calculate the half angle in radians
-        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
-
-        // Create points for both semicircles
-        Vector3[] innerPoints = new Vector3[semicircleSegments + 1];
-        Vector3[] outerPoints = new Vector3[semicircleSegments + 1];
-
-        for (int i = 0; i <= semicircleSegments; i++)
-        {
-            float t = (float)i / semicircleSegments;
-            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
-            
-            // Rotate the forward vector by the current angle around Y axis
-            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
-            innerPoints[i] = center + direction * innerRadius;
-            outerPoints[i] = center + direction * outerRadius;
-        }
+        // Generate points for both semicircles
+        Vector3[] innerPoints = GenerateArcPoints(center, forward, innerRadius, angle);
+        Vector3[] outerPoints = GenerateArcPoints(center, forward, outerRadius, angle);
 
         Gizmos.color = detectionZoneColor;
 
@@ -251,33 +292,12 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// <param name="angle">Total angle of the semicircle</param>
     private void DrawSemicircleOutline(Vector3 center, Vector3 forward, float radius, float angle)
     {
-        // Flatten forward to XZ plane
-        forward.y = 0;
-        forward.Normalize();
-
-        // Calculate the half angle in radians
-        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
-
-        // Create points for the semicircle
-        Vector3[] points = new Vector3[semicircleSegments + 1];
-
-        for (int i = 0; i <= semicircleSegments; i++)
-        {
-            float t = (float)i / semicircleSegments;
-            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
-            
-            // Rotate the forward vector by the current angle around Y axis
-            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
-            points[i] = center + direction * radius;
-        }
+        Vector3[] points = GenerateArcPoints(center, forward, radius, angle);
 
         Gizmos.color = detectionZoneColor;
 
         // Draw arc segments
-        for (int i = 0; i < semicircleSegments; i++)
-        {
-            Gizmos.DrawLine(points[i] + offset, points[i + 1] + offset);
-        }
+        DrawArcSegments(points);
 
         // Draw lines from center to the arc edges
         Gizmos.DrawLine(center + offset, points[0] + offset);
@@ -305,25 +325,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// <param name="filled">If true, draws filled triangles; if false, draws outline only</param>
     private void DrawSemicircle(Vector3 center, Vector3 forward, float radius, float angle, bool filled)
     {
-        // Flatten forward to XZ plane
-        forward.y = 0;
-        forward.Normalize();
-
-        // Calculate the half angle in radians
-        float halfAngleRad = (angle * 0.5f) * Mathf.Deg2Rad;
-
-        // Create points for the semicircle
-        Vector3[] points = new Vector3[semicircleSegments + 1];
-
-        for (int i = 0; i <= semicircleSegments; i++)
-        {
-            float t = (float)i / semicircleSegments;
-            float currentAngle = Mathf.Lerp(-halfAngleRad, halfAngleRad, t);
-            
-            // Rotate the forward vector by the current angle around Y axis
-            Vector3 direction = Quaternion.Euler(0, currentAngle * Mathf.Rad2Deg, 0) * forward;
-            points[i] = center + direction * radius;
-        }
+        Vector3[] points = GenerateArcPoints(center, forward, radius, angle);
 
         Gizmos.color = detectionZoneColor;
 
@@ -338,10 +340,7 @@ public class NPCGizmoGenerator : MonoBehaviour
         else
         {
             // Draw outline only - arc segments
-            for (int i = 0; i < semicircleSegments; i++)
-            {
-                Gizmos.DrawLine(points[i] + offset, points[i + 1] + offset);
-            }
+            DrawArcSegments(points);
         }
 
         // Draw lines from center to the arc edges (for both filled and outline)
@@ -372,6 +371,7 @@ public class NPCGizmoGenerator : MonoBehaviour
     /// </summary>
     private void DrawEdgeAvoidanceGizmos()
     {
+        //Return Conditionals
         if (!npcController.enabled) return;
         if (!npcController.gameObject.activeInHierarchy) return;
         if (!npcController.EnableEdgeAvoidance) return;
@@ -465,5 +465,172 @@ public class NPCGizmoGenerator : MonoBehaviour
         }
         
         return (true, Vector3.zero);
+    }
+
+    /// <summary>
+    /// Draws the actual RVO collision predictions: trajectories, time-to-collision, and closest approach points.
+    /// This uses the collision details from the RVODebugData structure.
+    /// </summary>
+    private void DrawRVOCollisionPredictions()
+    {
+        if (!showCollisionPredictions) return;
+        if (!npcController.HasRVODebugData) return;
+
+        RVOSystem.RVODebugData debugData = npcController.LastRVODebugData;
+        if (debugData.velocityEvaluations == null || debugData.velocityEvaluations.Count == 0) return;
+
+        Vector3 basePos = transform.position + Vector3.up * 0.5f;
+        float effectiveRadius = npcController.RvoAgentRadius * npcController.PersonalSpaceMultiplier;
+
+        // Get the chosen velocity evaluation (contains collision predictions for the actual path)
+        int chosenIndex = debugData.chosenVelocityIndex;
+        if (chosenIndex < 0 || chosenIndex >= debugData.velocityEvaluations.Count) return;
+
+        RVOSystem.VelocityEvaluation chosenEvaluation = debugData.velocityEvaluations[chosenIndex];
+        if (chosenEvaluation.collisionDetails == null || chosenEvaluation.collisionDetails.Count == 0) return;
+
+        // Draw collision predictions for each neighbor
+        foreach (var collision in chosenEvaluation.collisionDetails)
+        {
+            Vector3 neighborPos3D = new Vector3(collision.neighbor.position.x, basePos.y, collision.neighbor.position.z);
+
+            // Draw line to neighbor
+            Gizmos.color = new Color(1f, 1f, 0f, 0.5f); // Yellow
+            Gizmos.DrawLine(basePos, neighborPos3D);
+
+            // Draw predicted trajectories
+            Vector3 myPos3D = new Vector3(collision.myPositionAtClosest.x, basePos.y, collision.myPositionAtClosest.y);
+            Vector3 neighborPos3D_closest = new Vector3(collision.neighborPositionAtClosest.x, basePos.y, collision.neighborPositionAtClosest.y);
+
+            // Color based on collision status
+            Gizmos.color = collision.willCollide ? new Color(1f, 0f, 0f, 0.7f) : new Color(0f, 1f, 0f, 0.7f); // Red if collision, green if safe
+            
+            // Draw my predicted trajectory
+            Vector2 myVel = debugData.chosenVelocity;
+            Gizmos.DrawLine(basePos, myPos3D);
+            DrawArrowHead(myPos3D, new Vector3(myVel.x, 0f, myVel.y).normalized, Gizmos.color, 0.3f);
+            
+            // Draw neighbor's predicted trajectory
+            Vector2 neighborVel = new Vector2(collision.neighbor.velocity.x, collision.neighbor.velocity.z);
+            Gizmos.DrawLine(neighborPos3D, neighborPos3D_closest);
+            DrawArrowHead(neighborPos3D_closest, new Vector3(neighborVel.x, 0f, neighborVel.y).normalized, Gizmos.color, 0.3f);
+
+            // Draw spheres at closest approach points
+            Gizmos.DrawWireSphere(myPos3D, effectiveRadius);
+            Gizmos.DrawWireSphere(neighborPos3D_closest, effectiveRadius);
+
+            // Draw line between closest approach points
+            Gizmos.color = collision.willCollide ? Color.red : Color.green;
+            Gizmos.DrawLine(myPos3D, neighborPos3D_closest);
+
+#if UNITY_EDITOR
+            // Label with time and distance info
+            UnityEditor.Handles.color = Gizmos.color;
+            Vector3 labelPos = (myPos3D + neighborPos3D_closest) * 0.5f + Vector3.up * 0.3f;
+            string label = $"t={collision.timeToClosest:F2}s\nd={collision.closestDistance:F2}m";
+            if (collision.willCollide)
+            {
+                label += "\nCOLLISION!";
+            }
+            UnityEditor.Handles.Label(labelPos, label);
+#endif
+        }
+    }
+
+    private void DrawVelocityArrows()
+    {
+        Vector3 basePos = transform.position + Vector3.up * 0.5f;
+        float arrowScale = 0.5f;
+
+        // Blue arrow: Preferred velocity (where we want to go)
+        if (npcController.PreferredRVOVelocity.magnitude > 0.01f)
+        {
+            Vector3 preferredDir = new Vector3(npcController.PreferredRVOVelocity.x, 0f, npcController.PreferredRVOVelocity.y);
+            Gizmos.color = Color.blue;
+            Gizmos.DrawLine(basePos, basePos + preferredDir * arrowScale);
+            DrawArrowHead(basePos + preferredDir * arrowScale, preferredDir.normalized, Color.blue, 0.2f);
+        }
+
+        // Cyan arrow: Flow-adjusted velocity (shows lane formation influence)
+        if (npcController.RvoFlowBias > 0.01f && npcController.PreferredRVOVelocity.magnitude > 0.01f)
+        {
+            Vector2 flowAdjusted = npcController.CalculateFlowFieldPublic(npcController.PreferredRVOVelocity);
+            if ((flowAdjusted - npcController.PreferredRVOVelocity).magnitude > 0.05f) // Only show if different
+            {
+                Vector3 flowDir = new Vector3(flowAdjusted.x, 0f, flowAdjusted.y);
+                Gizmos.color = Color.cyan;
+                Gizmos.DrawLine(basePos, basePos + flowDir * arrowScale);
+                DrawArrowHead(basePos + flowDir * arrowScale, flowDir.normalized, Color.cyan, 0.15f);
+            }
+        }
+
+        // Yellow arrow: RVO computed velocity (collision-free velocity)
+        if (npcController.CurrentRVOVelocity.magnitude > 0.01f)
+        {
+            Vector3 rvoDir = new Vector3(npcController.CurrentRVOVelocity.x, 0f, npcController.CurrentRVOVelocity.y);
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawLine(basePos, basePos + rvoDir * arrowScale);
+            DrawArrowHead(basePos + rvoDir * arrowScale, rvoDir.normalized, Color.yellow, 0.2f);
+        }
+
+        // Green arrow: Actual velocity (from Rigidbody)
+        if (npcController.ActualVelocity.magnitude > 0.01f)
+        {
+            Vector3 actualDir = new Vector3(npcController.ActualVelocity.x, 0f, npcController.ActualVelocity.z);
+            Gizmos.color = Color.green;
+            Gizmos.DrawLine(basePos, basePos + actualDir * arrowScale);
+            DrawArrowHead(basePos + actualDir * arrowScale, actualDir.normalized, Color.green, 0.2f);
+        }
+    }
+
+    private void DrawArrowHead(Vector3 tip, Vector3 direction, Color color, float size)
+    {
+        Gizmos.color = color;
+        Vector3 right = Quaternion.Euler(0, 30, 0) * -direction * size;
+        Vector3 left = Quaternion.Euler(0, -30, 0) * -direction * size;
+        Gizmos.DrawLine(tip, tip + right);
+        Gizmos.DrawLine(tip, tip + left);
+    }
+
+    /// <summary>
+    /// Draws the candidate velocities tested during RVO computation.
+    /// Green arrows for safe velocities, Red arrows for collisions.
+    /// Uses the RVODebugData structure from RVOSystem.
+    /// </summary>
+    private void DrawCandidateVelocities()
+    {
+        if (!showCandidateVelocities) return;
+        if (!npcController.HasRVODebugData) return;
+
+        RVOSystem.RVODebugData debugData = npcController.LastRVODebugData;
+        if (debugData.sampledVelocities == null || debugData.sampledVelocities.Count == 0) return;
+
+        Vector3 basePos = transform.position + Vector3.up * 1f;
+        float arrowScale = 0.3f;
+
+        // Draw each sampled velocity
+        for (int i = 0; i < debugData.sampledVelocities.Count; i++)
+        {
+            Vector2 sampledVel = debugData.sampledVelocities[i];
+            RVOSystem.VelocityEvaluation evaluation = debugData.velocityEvaluations[i];
+
+            Vector3 dir3D = new Vector3(sampledVel.x, 0f, sampledVel.y);
+            
+            // Choose color based on safety
+            Gizmos.color = evaluation.isSafe ? Color.green : Color.red;
+            
+            Gizmos.DrawLine(basePos, basePos + dir3D * arrowScale);
+            DrawArrowHead(basePos + dir3D * arrowScale, dir3D.normalized, Gizmos.color, 0.2f);
+        }
+
+        // Draw the chosen velocity (thicker arrow in white)
+        Vector2 chosenVel = debugData.chosenVelocity;
+        if (chosenVel.magnitude > 0.01f)
+        {
+            Vector3 chosenDir3D = new Vector3(chosenVel.x, 0f, chosenVel.y);
+            Gizmos.color = Color.white;
+            Gizmos.DrawLine(basePos, basePos + chosenDir3D * arrowScale * 1.5f);
+            DrawArrowHead(basePos + chosenDir3D * arrowScale * 1.5f, chosenDir3D.normalized, Color.white, 0.25f);
+        }
     }
 }

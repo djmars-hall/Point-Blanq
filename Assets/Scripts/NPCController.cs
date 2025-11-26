@@ -47,11 +47,54 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     [SerializeField] private Vector2 cornerZoneSize = new Vector2(3f, 0.5f); // Width (perpendicular) and Depth (along path) of corner visitation zone
     public Vector2 CornerZoneSize => cornerZoneSize;
 
+    [Header("RVO Settings")]
+    [Tooltip("Time horizon for collision prediction (2-4 seconds typical).")]
+    [SerializeField] private float rvoTimeHorizon = 2.5f;
+    [Tooltip("Agent radius for collision calculation.")]
+    [SerializeField] private float rvoAgentRadius = 0.75f;
+    [Tooltip("Responsibility factor: 0.5 = symmetric (both agents adjust equally)")]
+    [SerializeField] [UnityEngine.Range(0.1f, 0.9f)] private float rvoResponsibility = 0.5f;
+    [Tooltip("Flow field bias: Higher values encourage lane formation by biasing toward neighbor flow directions")]
+    [SerializeField] [UnityEngine.Range(0f, 1f)] private float rvoFlowBias = 0.3f;
+    
+    [Header("RVO Advanced Settings")]
+    [Tooltip("Enable adaptive time horizon that adjusts based on crowd density")]
+    [SerializeField] private bool useAdaptiveTimeHorizon = true;
+    [Tooltip("Minimum time horizon in sparse areas (seconds)")]
+    [SerializeField] private float minTimeHorizon = 1.5f;
+    [Tooltip("Maximum time horizon in dense areas (seconds)")]
+    [SerializeField] private float maxTimeHorizon = 3.5f;
+    [Tooltip("Personal space multiplier: increases effective radius to maintain comfortable distance")]
+    [SerializeField] [UnityEngine.Range(1.0f, 2.0f)] private float personalSpaceMultiplier = 1.2f;
+    [Tooltip("Velocity smoothing factor: higher = smoother but less responsive (0 = no smoothing)")]
+    [SerializeField] [UnityEngine.Range(0f, 0.8f)] private float velocitySmoothingFactor = 0.3f;
+
+    private Vector2 currentRVOVelocity;
+    private Vector2 preferredRVOVelocity;
+    private List<RVOSystem.AgentData> rvoNeighbors;
+    private Vector2 previousRVOVelocity; // For smoothing
+    private float currentCrowdDensity; // For adaptive time horizon
+
+    // Debug visualization for RVO - stores the last evaluation results
+    private RVOSystem.RVODebugData lastRVODebugData;
+    private bool hasRVODebugData = false;
+
+    public Vector2 CurrentRVOVelocity => currentRVOVelocity;
+    public Vector2 PreferredRVOVelocity => preferredRVOVelocity;
+    public float NpcWalkingSpeed => npcWalkingSpeed;
+    public float RvoFlowBias => rvoFlowBias;
+    public RVOSystem.RVODebugData LastRVODebugData => lastRVODebugData;
+    public bool HasRVODebugData => hasRVODebugData;
+    public float RvoAgentRadius => rvoAgentRadius;
+    public float PersonalSpaceMultiplier => personalSpaceMultiplier;
+    public float RvoResponsibility => rvoResponsibility;
+    public bool UseAdaptiveTimeHorizon => useAdaptiveTimeHorizon;
+    public float CurrentCrowdDensity => currentCrowdDensity;
+    
     [Header("NPC Detection Settings")]
     [SerializeField] private float detectionRadius = 4f; // Radius of the semicircle detection zone
     [SerializeField] private float detectionAngle = 270f; // Angle of detection
     [SerializeField] private bool enableNPCDetection = true; // Toggle detection on/off
-    [SerializeField] private float avoidanceStrength = 1.5f; // How strongly NPCs avoid each other
     [SerializeField] private float avoidanceDistance = 1.5f; // Distance at which avoidance is at maximum
     
     [Header("NavMesh Edge Detection Settings")]
@@ -66,18 +109,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     // If a character is in this dictionary, they are detected. If intensity > 0, they are being avoided.
     private Dictionary<BaseCharController, float> detectedCharacterIntensities = new Dictionary<BaseCharController, float>();
 
-    // Tracks if we are currently tailgating someone (set by CalculateCharacterAvoidance)
-    private bool isTailgating = false;
-    
-    // Tracks the closest distance to a character we're tailgating (for proportional slowdown)
-    private float closestTailgatingDistance = float.MaxValue;
-
-    // Tracks if we are currently in a head-on collision scenario (set by CalculateCharacterAvoidance)
-    private bool isInHeadOnCollision = false;
-    
-    // Speed multiplier for head-on collisions (1.0 = full speed, 0.3 = 30% speed for less assertive)
-    private float headOnSpeedReduction = 1.0f;
-
     // <==========================================================>
     // Public getters for edge avoidance settings
     // <==========================================================>
@@ -89,7 +120,6 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     public Dictionary<BaseCharController, float> DetectedCharacterIntensities => detectedCharacterIntensities;
     public float DetectionRadius => detectionRadius;
     public float DetectionAngle => detectionAngle;
-    public float AvoidanceStrength => avoidanceStrength;
     public float AvoidanceDistance => avoidanceDistance;
     // <==========================================================>
     // Public getters for edge avoidance settings
@@ -106,6 +136,8 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     { 
         base.Awake();
         pathway = new NPCPathway(this);
+        rvoNeighbors = new List<RVOSystem.AgentData>();
+        previousRVOVelocity = Vector2.zero;
         Debug.Log(NetworkManager.Singleton.PrefabHandler.AddHandler(gameObject, this));
         if (IsPoolable) objectPool.RegisterSpawnable(this); 
     }
@@ -248,343 +280,321 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
     }
 
     /// <summary>
-    /// Calculates an avoidance steering vector based on detected characters.
-    /// Only avoids characters that are on a potential collision course.
-    /// The closer another character is and the sooner a collision would occur, the stronger the avoidance force.
-    /// Uses actual velocity from Rigidbody to determine if the other character is moving.
-    /// Returns a steering vector (not normalized) representing the avoidance direction and strength.
+    /// Prepares the list of RVO neighbors from detected characters.
+    /// Converts BaseCharController data to RVOSystem.AgentData format.
     /// </summary>
-    /// <returns>A steering vector (not normalized) representing the avoidance direction and strength</returns>
-    private Vector3 CalculateCharacterAvoidance()
+    /// <returns>List of RVO agent data for neighbors</returns>
+    private List<RVOSystem.AgentData> PrepareRVONeighbors()
+    {
+        rvoNeighbors.Clear();
+        foreach (var kvp in detectedCharacterIntensities)
+        {
+            BaseCharController character = kvp.Key;
+            if (character != null && character.gameObject.activeInHierarchy)
+            {
+                rvoNeighbors.Add(new RVOSystem.AgentData(
+                    character.transform.position,
+                    character.ActualVelocity,
+                    rvoAgentRadius
+                ));
+            }
+        }
+        return rvoNeighbors;
+    }
+
+    /// <summary>
+    /// Calculates the average flow direction of nearby agents moving in similar directions.
+    /// This encourages lane formation by biasing toward maintaining parallel movement.
+    /// </summary>
+    /// <param name="myDirection">Current desired direction of movement</param>
+    /// <returns>Flow-adjusted direction vector (or original if no flow detected)</returns>
+    private Vector2 CalculateFlowField(Vector2 myDirection)
+    {
+        if (rvoFlowBias <= 0.01f || detectedCharacterIntensities.Count == 0)
+        {
+            return myDirection; // No flow bias, return original direction
+        }
+
+        Vector2 flowSum = Vector2.zero;
+        int flowCount = 0;
+        float mySpeed = myDirection.magnitude;
+
+        foreach (var kvp in detectedCharacterIntensities)
+        {
+            BaseCharController character = kvp.Key;
+            if (character == null || !character.gameObject.activeInHierarchy)
+                continue;
+
+            Vector3 otherVel3D = character.ActualVelocity;
+            Vector2 otherVel = new Vector2(otherVel3D.x, otherVel3D.z);
+
+            // Only consider agents that are moving
+            if (otherVel.magnitude < 0.1f)
+                continue;
+
+            Vector2 otherDir = otherVel.normalized;
+            float alignment = Vector2.Dot(myDirection.normalized, otherDir);
+
+            // Only consider agents moving in a similar direction (alignment > 0.5 means within ~60 degrees)
+            if (alignment > 0.5f)
+            {
+                // Weight by alignment - more aligned neighbors have more influence
+                flowSum += otherDir * alignment;
+                flowCount++;
+            }
+        }
+
+        if (flowCount == 0)
+        {
+            return myDirection; // No flow detected
+        }
+
+        // Calculate average flow direction
+        Vector2 flowDirection = (flowSum / flowCount).normalized;
+
+        // Blend between desired direction and flow direction based on flow bias
+        Vector2 blendedDirection = Vector2.Lerp(myDirection.normalized, flowDirection, rvoFlowBias);
+        
+        // Restore original speed
+        return blendedDirection * mySpeed;
+    }
+
+    /// <summary>
+    /// Calculates local crowd density based on nearby agents.
+    /// Returns a normalized value from 0 (sparse) to 1 (dense).
+    /// </summary>
+    private float CalculateCrowdDensity()
     {
         if (detectedCharacterIntensities.Count == 0)
-            return Vector3.zero;
+            return 0f;
 
-        Vector3 avoidanceVector = Vector3.zero;
-        isTailgating = false; // Reset at the start of each calculation
-        closestTailgatingDistance = float.MaxValue; // Reset closest distance
-        isInHeadOnCollision = false; // Reset head-on collision state
-        headOnSpeedReduction = 1.0f; // Reset speed reduction (default: full speed)
+        // Density based on number of neighbors and their proximity
+        float densityScore = 0f;
+        float totalWeight = 0f;
 
-        // Create a copy of the keys to iterate over (allows safe modification of dictionary values)
-        var detectedCharactersList = new List<BaseCharController>(detectedCharacterIntensities.Keys);
-
-        foreach (BaseCharController otherCharacter in detectedCharactersList)
+        foreach (var kvp in detectedCharacterIntensities)
         {
-            if (otherCharacter == null || !otherCharacter.gameObject.activeInHierarchy)
+            BaseCharController character = kvp.Key;
+            if (character == null || !character.gameObject.activeInHierarchy)
                 continue;
 
-            // Calculate direction to the other character
-            Vector3 toOther = otherCharacter.transform.position - transform.position;
-            toOther.y = 0; // Keep on XZ plane
+            float distance = Vector3.Distance(transform.position, character.transform.position);
             
-            float distance = toOther.magnitude;
+            // Weight by inverse distance (closer = higher contribution to density)
+            float weight = 1f - Mathf.Clamp01(distance / detectionRadius);
+            densityScore += weight;
+            totalWeight += 1f;
+        }
+
+        if (totalWeight > 0f)
+        {
+            // Normalize by maximum possible neighbors in detection radius
+            float maxNeighbors = 8f; // Assume max 8 neighbors for normalization
+            return Mathf.Clamp01(densityScore / maxNeighbors);
+        }
+
+        return 0f;
+    }
+
+    /// <summary>
+    /// Calculates adaptive time horizon based on crowd density.
+    /// Dense crowds use longer time horizons for smoother avoidance.
+    /// </summary>
+    private float GetAdaptiveTimeHorizon()
+    {
+        if (!useAdaptiveTimeHorizon)
+            return rvoTimeHorizon;
+
+        currentCrowdDensity = CalculateCrowdDensity();
+
+        // Lerp between min and max based on density
+        return Mathf.Lerp(minTimeHorizon, maxTimeHorizon, currentCrowdDensity);
+    }
+
+    // Make this public so NPCGizmoGenerator can call it
+    public float GetAdaptiveTimeHorizonPublic()
+    {
+        return GetAdaptiveTimeHorizon();
+    }
+
+    // Make this public so NPCGizmoGenerator can call it
+    public Vector2 CalculateFlowFieldPublic(Vector2 myDirection)
+    {
+        return CalculateFlowField(myDirection);
+    }
+
+    /// <summary>
+    /// Applies velocity smoothing to reduce jitter and oscillation.
+    /// </summary>
+    private Vector2 ApplyVelocitySmoothing(Vector2 newVelocity)
+    {
+        if (velocitySmoothingFactor <= 0.01f)
+            return newVelocity;
+
+        // Exponential smoothing
+        Vector2 smoothedVelocity = Vector2.Lerp(newVelocity, previousRVOVelocity, velocitySmoothingFactor);
+        previousRVOVelocity = smoothedVelocity;
+        
+        return smoothedVelocity;
+    }
+
+    /// <summary>
+    /// Calculates an edge-aware preferred velocity by adding repulsion forces from nearby edges.
+    /// This guides RVO toward safer directions before velocity computation.
+    /// </summary>
+    /// <param name="desiredVelocity">The original desired velocity (toward goal)</param>
+    /// <returns>Edge-influenced velocity that biases away from edges</returns>
+    private Vector2 CalculateEdgeAwarePreferredVelocity(Vector2 desiredVelocity)
+    {
+        if (!enableEdgeAvoidance || desiredVelocity.magnitude < 0.01f)
+            return desiredVelocity;
+
+        Vector3 currentPos = transform.position;
+        Vector3 desiredDir3D = new Vector3(desiredVelocity.x, 0, desiredVelocity.y).normalized;
+        
+        // Check multiple directions around the desired direction to detect nearby edges
+        Vector3 edgeRepulsionForce = Vector3.zero;
+        int edgeDetectionCount = 0;
+        
+        // Sample directions in a cone around the desired direction
+        float[] sampleAngles = { 0f, -30f, 30f, -60f, 60f };
+        
+        foreach (float angle in sampleAngles)
+        {
+            Vector3 sampleDir = Quaternion.Euler(0, angle, 0) * desiredDir3D;
+            Vector3 samplePos = currentPos + sampleDir * edgeCheckAheadDistance;
             
-            if (distance < 0.01f)
+            // Check if this direction leads toward an edge
+            NavMeshHit edgeHit;
+            if (NavMesh.FindClosestEdge(samplePos, out edgeHit, NavMesh.AllAreas))
             {
-                Debug.LogWarning("Two characters are extremely close! Skipping avoidance calculation to avoid division by zero.");
-                continue;
-            }
-
-            Vector3 toOtherNormalized = toOther / distance;
-
-            // Get my forward direction (flattened to XZ plane)
-            Vector3 myForward = transform.forward;
-            myForward.y = 0;
-            myForward.Normalize();
-
-            // Get the other character's actual velocity
-            Vector3 otherVelocity = otherCharacter.ActualVelocity;
-            otherVelocity.y = 0; // Keep on XZ plane
-            
-            // Determine the other character's heading based on velocity
-            // If velocity is near zero, they're stationary
-            Vector3 otherHeading;
-            bool otherIsStationary = otherVelocity.magnitude < 0.01f;
-            
-            if (otherIsStationary)
-            {
-                // Character is stationary - use position for heading calculation
-                otherHeading = Vector3.zero;
-            }
-            else
-            {
-                // Character is moving - use velocity direction
-                otherHeading = otherVelocity.normalized;
-            }
-
-            // Calculate dot product to determine if we're heading toward the other character
-            // Positive dot product means we're moving toward the other character
-            float myApproachDot = Vector3.Dot(myForward, toOtherNormalized);
-            
-            // Check if we're too close (within avoidance distance) regardless of direction
-            bool isTooClose = distance < avoidanceDistance;
-
-            if(isTooClose)
-            {
-                detectedCharacterIntensities[otherCharacter] = 1.0f;
-            }
-            
-            // If we're not heading toward them AND not too close, skip avoidance
-            if (myApproachDot < 0.1f && !isTooClose)
-            {
-                // Set intensity to 0 (detected but not avoided)
-                detectedCharacterIntensities[otherCharacter] = 0.0f;
-                continue;
-            }
-
-            // Calculate if the other character is heading toward us
-            float otherApproachDot = 0f;
-            if (!otherIsStationary)
-            {
-                // Only calculate approach if they're moving
-                otherApproachDot = Vector3.Dot(otherHeading, -toOtherNormalized);
-            }
-            // If stationary, otherApproachDot stays 0, meaning they're not approaching
-
-            // Check if we're both heading in the same direction (parallel movement)
-            // Dot product close to 1.0 means same direction
-            float sameDirectionDot = 0f;
-            bool movingInSameDirection = false;
-            if (!otherIsStationary)
-            {
-                sameDirectionDot = Vector3.Dot(myForward, otherHeading);
-                movingInSameDirection = sameDirectionDot > 0.7f; // If heading directions are similar (within ~45 degrees)
-            }
-
-            // Check if the other character is in FRONT of us or BESIDE us
-            // This is key for distinguishing tailgating (behind them) from parallel walking (beside them)
-            bool otherIsInFront = myApproachDot > 0.5f; // They're significantly in front of our forward direction
-            
-            // Calculate perpendicular distance (how far to the side they are)
-            Vector3 perpendicular = Vector3.Cross(Vector3.up, myForward);
-            float lateralDistance = Mathf.Abs(Vector3.Dot(perpendicular, toOtherNormalized));
-            bool otherIsBeside = lateralDistance > 0.5f; // They're significantly to the side
-
-            // Calculate relative heading: are we on a collision course?
-            // If both are moving toward each other, this will be high
-            // If one is moving away or perpendicular, this will be low
-            // If other is stationary, this will be based only on our approach
-            float collisionThreat = myApproachDot * Mathf.Max(0f, otherApproachDot);
-
-            // Determine if this is a head-on collision (both moving toward each other)
-            // FIXED: More strict threshold (0.5 instead of 0.3) and also check that we're approaching them
-            bool isHeadOn = !otherIsStationary && otherApproachDot > 0.5f && myApproachDot > 0.5f;
-            
-            // Determine if we're following/tailgating (behind someone moving in same direction)
-            // Key change: Only tailgate if they're IN FRONT of us, we're too close, and moving same direction
-            bool isTailgatingThisCharacter = isTooClose && otherIsInFront && movingInSameDirection && !otherIsBeside;
-
-            // NEW: Check if we're moving parallel (beside someone moving in same direction)
-            // In this case, maintain lateral distance but DON'T slow down
-            bool parallelAndTooClose = isTooClose && movingInSameDirection && otherIsBeside;
-
-            // For stationary characters, if we're too close we should avoid them
-            bool approachingStationary = otherIsStationary && (isTooClose || myApproachDot > 0.1f);
-
-            // If there's no significant collision threat and we're not tailgating and not approaching a stationary character and not parallel-too-close, skip
-            if (collisionThreat < 0.05f && !isTailgatingThisCharacter && !approachingStationary && !parallelAndTooClose)
-            {
-                // Set intensity to 0 (detected but not avoided)
-                detectedCharacterIntensities[otherCharacter] = 0.0f;
-                continue;
-            }
-
-            // Calculate time to potential collision
-            // Lower time = more urgent avoidance needed
-            float relativeSpeed = npcWalkingSpeed + (otherIsStationary ? 0f : npcWalkingSpeed); // Consider if other is stationary
-            float timeToCollision = distance / Mathf.Max(0.1f, relativeSpeed * Mathf.Max(0.1f, collisionThreat > 0 ? collisionThreat : myApproachDot));
-
-            // Calculate avoidance strength based on distance
-            float avoidanceFactor;
-            if (distance < avoidanceDistance)
-            {
-                // At very close distances, use maximum avoidance
-                avoidanceFactor = 1.0f;
-            }
-            else
-            {
-                // Falloff based on distance relative to detection radius
-                avoidanceFactor = 1.0f - ((distance - avoidanceDistance) / (detectionRadius - avoidanceDistance));
-                avoidanceFactor = Mathf.Max(0f, avoidanceFactor);
-            }
-
-            // Store the base avoidance factor before modifications for intensity tracking
-            float baseAvoidanceFactor = avoidanceFactor;
-
-            // Increase avoidance factor based on collision threat and urgency
-            if (approachingStationary)
-            {
-                // For stationary characters, use a moderate avoidance factor
-                avoidanceFactor *= Mathf.Max(0.5f, myApproachDot);
-            }
-            else if (parallelAndTooClose)
-            {
-                // For parallel movement that's too close, use moderate avoidance
-                // This will create lateral separation without triggering slowdown
-                avoidanceFactor *= 0.8f;
-            }
-            else
-            {
-                avoidanceFactor *= Mathf.Max(0.3f, collisionThreat); // Minimum 30% factor for tailgating
-            }
-            
-            // Add time urgency factor (closer collision time = stronger avoidance)
-            float urgencyFactor = Mathf.Clamp01(3.0f / timeToCollision); // Peaks at ~3 seconds
-            avoidanceFactor *= (1.0f + urgencyFactor);
-
-            // For head-on collisions, boost avoidance significantly
-            if (isHeadOn)
-            {
-                avoidanceFactor *= 2.0f;
-                
-                // Track that we're in a head-on collision
-                isInHeadOnCollision = true;
-                
-                // If we're less assertive, reduce our speed to yield more effectively
-                if (otherCharacter.AssertivenessLevel > assertivenessLevel)
+                // If edge is close, create a repulsion force
+                if (edgeHit.distance < edgeDetectionDistance)
                 {
-                    // We are less assertive, slow down to 30% speed
-                    headOnSpeedReduction = 0.3f;
-                }
-                // If we're more assertive, maintain full speed (already at 1.0f)
-                // If equal assertiveness, both maintain full speed and move to the side
-            }
-            // For tailgating, apply moderate boost and track closest distance
-            else if (isTailgatingThisCharacter)
-            {
-                avoidanceFactor *= 1.3f;
-                isTailgating = true; // Set the field if we are tailgating ANYONE right now
-                
-                // Track the closest tailgating distance for proportional slowdown
-                if (distance < closestTailgatingDistance)
-                {
-                    closestTailgatingDistance = distance;
-                }
-            }
-            // For parallel movement, don't boost - just maintain lateral distance
-            // (no special handling needed, avoidanceFactor is already set)
-
-            // FIXED: Consider assertiveness but ALWAYS avoid in head-on collisions
-            // In head-on situations, assertiveness only determines which side to move to, not whether to avoid
-            if (!isHeadOn)
-            {
-                // Normal assertiveness logic (not head-on)
-                if (otherCharacter.AssertivenessLevel > assertivenessLevel)
-                {
-                    // We are less assertive, so we yield (apply full avoidance)
-                    // avoidanceFactor remains unchanged
-                }
-                else if (otherCharacter.AssertivenessLevel < assertivenessLevel)
-                {
-                    // We are more assertive, so we don't yield (skip this character)
-                    // Exception: If tailgating or approaching stationary or parallel-too-close, still avoid (move to the side)
-                    if (!isTailgatingThisCharacter && !approachingStationary && !parallelAndTooClose)
+                    // Calculate repulsion direction (away from edge)
+                    Vector3 toEdge = edgeHit.position - currentPos;
+                    toEdge.y = 0;
+                    
+                    if (toEdge.magnitude > 0.01f)
                     {
-                        // Set intensity to 0 (detected but not avoided due to assertiveness)
-                        detectedCharacterIntensities[otherCharacter] = 0.0f;
-                        continue;
+                        // Repulsion strength inversely proportional to distance
+                        float repulsionStrength = 1.0f - (edgeHit.distance / edgeDetectionDistance);
+                        repulsionStrength = Mathf.Pow(repulsionStrength, 2); // Quadratic falloff
+                        
+                        Vector3 repulsionDir = -toEdge.normalized;
+                        edgeRepulsionForce += repulsionDir * repulsionStrength;
+                        edgeDetectionCount++;
                     }
                 }
-                // If assertiveness is equal, both will avoid each other (default behavior)
             }
-            // If it IS head-on, we skip the assertiveness check and ALWAYS avoid
-
-            // Store normalized avoidance intensity (0.0 to 1.0+)
-            // Intensity considers: distance, collision threat, urgency, scenario type
-            float intensity = avoidanceFactor / avoidanceStrength;
-            detectedCharacterIntensities[otherCharacter] = intensity;
-
-            // Calculate avoidance direction
-            Vector3 avoidanceDirection;
             
-            // For head-on collisions (both moving toward each other), move to the side
-            if (isHeadOn)
+            // Also check with raycast for obstacles
+            NavMeshHit raycastHit;
+            if (NavMesh.Raycast(currentPos, samplePos, out raycastHit, NavMesh.AllAreas))
             {
-                // Use assertiveness to deterministically choose which side to move to
-                // This ensures both NPCs don't pick the same side
-                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
+                // Hit an obstacle - create repulsion away from it
+                Vector3 toObstacle = raycastHit.position - currentPos;
+                toObstacle.y = 0;
                 
-                // Determine side based on assertiveness comparison
-                // Lower assertiveness moves right, higher moves left
-                // If equal, use relative position as tiebreaker
-                bool moveRight;
-                if (otherCharacter.AssertivenessLevel != assertivenessLevel)
+                if (toObstacle.magnitude > 0.01f)
                 {
-                    // Different assertiveness: less assertive moves right
-                    moveRight = assertivenessLevel < otherCharacter.AssertivenessLevel;
+                    float distToObstacle = toObstacle.magnitude;
+                    float repulsionStrength = 1.0f - Mathf.Clamp01(distToObstacle / edgeCheckAheadDistance);
+                    repulsionStrength = Mathf.Pow(repulsionStrength, 2);
+                    
+                    Vector3 repulsionDir = -toObstacle.normalized;
+                    edgeRepulsionForce += repulsionDir * repulsionStrength;
+                    edgeDetectionCount++;
+                }
+            }
+        }
+        
+        // If edges detected, blend the repulsion with the desired velocity
+        if (edgeDetectionCount > 0)
+        {
+            edgeRepulsionForce /= edgeDetectionCount; // Average the forces
+            edgeRepulsionForce.y = 0;
+            
+            // Blend desired direction with repulsion (stronger repulsion = more influence)
+            float repulsionMagnitude = edgeRepulsionForce.magnitude;
+            float blendFactor = Mathf.Clamp01(repulsionMagnitude * 0.5f); // 0 to 0.5 influence
+            
+            Vector3 adjustedDir3D = Vector3.Lerp(desiredDir3D, (desiredDir3D + edgeRepulsionForce).normalized, blendFactor);
+            adjustedDir3D.y = 0;
+            adjustedDir3D.Normalize();
+            
+            // Maintain original speed
+            return new Vector2(adjustedDir3D.x, adjustedDir3D.z) * desiredVelocity.magnitude;
+        }
+        
+        return desiredVelocity;
+    }
+
+    /// <summary>
+    /// Applies edge constraints to RVO velocity with smooth adjustments rather than hard overrides.
+    /// If the RVO direction is unsafe, it rotates the velocity toward the nearest safe direction
+    /// while preserving as much of the original velocity magnitude as possible.
+    /// </summary>
+    /// <param name="rvoVelocity">The RVO-computed velocity</param>
+    /// <returns>Edge-constrained velocity with smooth adjustments</returns>
+    private Vector2 ApplyEdgeConstraints(Vector2 rvoVelocity)
+    {
+        if (!enableEdgeAvoidance)
+            return rvoVelocity;
+
+        Vector3 velocityDir3D = new Vector3(rvoVelocity.x, 0, rvoVelocity.y);
+        float speed = rvoVelocity.magnitude;
+
+        // If velocity is negligible, return as-is
+        if (speed < 0.01f)
+            return rvoVelocity;
+
+        Vector3 velocityDirNormalized = velocityDir3D.normalized;
+
+        // Check if the RVO direction is safe
+        if (!IsDirectionSafe(velocityDirNormalized))
+        {
+            // RVO direction would lead off NavMesh - find nearest safe direction
+            float safeAngle = FindSafeAngleFromEdge();
+            
+            if (safeAngle != 0f)
+            {
+                // Smoothly rotate toward safe direction instead of hard override
+                // Use a partial rotation to maintain some of the RVO's intent
+                float rotationStrength = Mathf.Clamp01(Mathf.Abs(safeAngle) / 45f); // 0-1 based on how far we need to turn
+                float adjustedAngle = safeAngle * Mathf.Lerp(0.3f, 1.0f, rotationStrength); // At least 30% rotation
+                
+                Vector3 adjustedDir = Quaternion.Euler(0, adjustedAngle, 0) * velocityDir3D;
+                adjustedDir.y = 0;
+                
+                // Verify the adjusted direction is actually safer
+                if (IsDirectionSafe(adjustedDir.normalized))
+                {
+                    // Reduce speed slightly when correcting direction to improve stability
+                    float speedMultiplier = Mathf.Lerp(0.7f, 1.0f, 1.0f - rotationStrength);
+                    return new Vector2(adjustedDir.x, adjustedDir.z).normalized * (speed * speedMultiplier);
                 }
                 else
                 {
-                    // FIXED: Equal assertiveness - move AWAY from where they are
-                    // If they're on our right (sideChoice > 0), we move left (moveRight = false)
-                    // If they're on our left (sideChoice < 0), we move right (moveRight = true)
-                    float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
-                    moveRight = sideChoice < 0; // INVERTED: move opposite to their position
-                }
-                
-                avoidanceDirection = moveRight ? perpendicularVec : -perpendicularVec;
-            }
-            // For tailgating scenarios, move to the side to pass
-            else if (isTailgatingThisCharacter)
-            {
-                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
-                
-                // Use assertiveness to choose passing side
-                // More assertive passes on the left, less assertive on the right
-                bool moveRight = assertivenessLevel <= otherCharacter.AssertivenessLevel;
-                
-                avoidanceDirection = moveRight ? perpendicularVec : -perpendicularVec;
-                
-                // Also add a slight backward component to maintain distance while tailgating
-                // This helps maintain avoidanceDistance when following directly behind
-                if (distance < avoidanceDistance)
-                {
-                    // Mix lateral avoidance with backward push to maintain distance
-                    float backwardComponent = (avoidanceDistance - distance) / avoidanceDistance;
-                    avoidanceDirection = avoidanceDirection * 0.7f + (-toOtherNormalized) * backwardComponent * 0.3f;
-                    avoidanceDirection.Normalize();
+                    // Adjusted direction still unsafe - try full rotation to safe angle
+                    Vector3 fullyAdjustedDir = Quaternion.Euler(0, safeAngle, 0) * velocityDir3D;
+                    fullyAdjustedDir.y = 0;
+                    
+                    if (IsDirectionSafe(fullyAdjustedDir.normalized))
+                    {
+                        // Use full safe direction at reduced speed
+                        return new Vector2(fullyAdjustedDir.x, fullyAdjustedDir.z).normalized * (speed * 0.5f);
+                    }
                 }
             }
-            // For parallel movement (same direction, too close), move to the side ONLY
-            else if (parallelAndTooClose)
-            {
-                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
-                
-                // Choose the side based on which side they're on relative to our path
-                float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
-                bool moveRight = sideChoice > 0;
-                
-                avoidanceDirection = moveRight ? -perpendicularVec : perpendicularVec;
-                
-                // IMPORTANT: No backward component - we want to maintain speed
-                // Just create lateral separation
-            }
-            // For stationary characters, move to the side
-            else if (approachingStationary)
-            {
-                Vector3 perpendicularVec = Vector3.Cross(Vector3.up, myForward);
-                
-                // Choose the side based on which side they're on relative to our path
-                float sideChoice = Vector3.Dot(perpendicularVec, toOtherNormalized);
-                bool moveRight = sideChoice > 0;
-                
-                avoidanceDirection = moveRight ? -perpendicularVec : perpendicularVec;
-            }
-            else
-            {
-                // For other scenarios, move directly away
-                avoidanceDirection = -toOtherNormalized;
-            }
-
-            // Add weighted avoidance vector
-            avoidanceVector += avoidanceDirection * avoidanceFactor;
+            
+            // No safe direction found - gradually reduce velocity instead of stopping abruptly
+            // This allows RVO to potentially find a better solution in the next frame
+            return rvoVelocity * 0.2f; // Reduce to 20% speed instead of full stop
         }
 
-        // Apply overall avoidance strength
-        avoidanceVector *= avoidanceStrength;
-
-        return avoidanceVector;
+        // Direction is safe, return original velocity
+        return rvoVelocity;
     }
 
     private void NewWaypoint()
@@ -694,20 +704,87 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             ScanForNearbyCharacters();
         }
 
-        // Calculate character avoidance force
-        Vector3 avoidanceForce = CalculateCharacterAvoidance();
-
-        // Calculate rotation direction and movement speed
+        // Reset rotation direction and movement speed
         float rotationDir = 0f;
         float movementSpeed = npcWalkingSpeed;
 
         // Calculate desired direction to next corner or forward
         Vector3 toCorner = CalculateTargetDirection();
 
-        // Apply avoidance steering
-        Vector3 desiredDirection = toCorner + avoidanceForce;
-        desiredDirection.y = 0;
-        desiredDirection.Normalize();
+        Vector3 desiredDirection;
+
+        // Calculate preferred velocity (where we want to go at full speed)
+        Vector3 preferredVelocity3D = toCorner * npcWalkingSpeed;
+        Vector2 basePreferredVelocity = new Vector2(preferredVelocity3D.x, preferredVelocity3D.z);
+
+        // STAGE 1: Apply edge awareness to guide preferred velocity away from edges
+        Vector2 edgeAwareVelocity = CalculateEdgeAwarePreferredVelocity(basePreferredVelocity);
+        
+        // Apply flow field bias to encourage lane formation
+        Vector2 flowAdjustedVelocity = CalculateFlowField(edgeAwareVelocity);
+        
+        // Store for visualization
+        preferredRVOVelocity = flowAdjustedVelocity;
+
+        // Prepare neighbor data for RVO
+        List<RVOSystem.AgentData> neighbors = PrepareRVONeighbors();
+
+        // Get current position and velocity in 2D
+        Vector2 currentPosition = new Vector2(transform.position.x, transform.position.z);
+        Vector2 currentVelocity = new Vector2(ActualVelocity.x, ActualVelocity.z);
+
+        // Calculate adaptive parameters
+        float adaptiveTimeHorizon = GetAdaptiveTimeHorizon();
+        float effectiveRadius = rvoAgentRadius * personalSpaceMultiplier;
+
+        // STAGE 2: Compute RVO avoidance velocity
+        // Use debug version in editor to populate visualization data
+        #if UNITY_EDITOR
+        currentRVOVelocity = RVOSystem.ComputeAvoidanceVelocityWithDebug(
+            currentPosition,
+            currentVelocity,
+            flowAdjustedVelocity,
+            neighbors,
+            effectiveRadius,
+            adaptiveTimeHorizon,
+            rvoResponsibility,
+            out lastRVODebugData
+        );
+        hasRVODebugData = true;
+        #else
+        currentRVOVelocity = RVOSystem.ComputeAvoidanceVelocity(
+            currentPosition,
+            currentVelocity,
+            flowAdjustedVelocity,
+            neighbors,
+            effectiveRadius,
+            adaptiveTimeHorizon,
+            rvoResponsibility
+        );
+        #endif
+
+        // Apply velocity smoothing
+        currentRVOVelocity = ApplyVelocitySmoothing(currentRVOVelocity);
+        
+        // STAGE 3: Apply final edge constraints (smooth adjustment, not hard override)
+        currentRVOVelocity = ApplyEdgeConstraints(currentRVOVelocity);
+        
+        // Convert RVO velocity back to 3D direction
+        desiredDirection = new Vector3(currentRVOVelocity.x, 0f, currentRVOVelocity.y);
+        
+        // If the RVO velocity is very small, just use the preferred direction
+        if (desiredDirection.magnitude < 0.01f)
+        {
+            desiredDirection = toCorner;
+        }
+        else
+        {
+            desiredDirection.Normalize();
+        }
+
+        // RVO already handles speed modulation, so we use the magnitude
+        float rvoSpeed = currentRVOVelocity.magnitude;
+        movementSpeed = Mathf.Min(rvoSpeed, npcWalkingSpeed); // Cap at max speed
 
         // Calculate rotation needed to face desired direction
         if (desiredDirection.magnitude > 0.01f)
@@ -723,39 +800,10 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
             rotationDir = Mathf.Clamp(angleToDesired / 45f, -1f, 1f);
         }
 
-        // Adjust speed based on situation
-        if (isTailgating)
-        {
-            // Calculate proportional slowdown based on distance to the closest character we're tailgating
-            // At half avoidanceDistance (e.g., 0.75m): stop completely (0%)
-            // At full avoidanceDistance (e.g., 1.5m): slow to 50%
-            // Between these: linear interpolation
-            
-            float minSlowdownDistance = avoidanceDistance * 0.5f; // Distance at which we stop (0% speed)
-            float maxSlowdownDistance = avoidanceDistance;         // Distance at which we're at 50% speed
-            
-            // Clamp the distance to the range
-            float clampedDistance = Mathf.Clamp(closestTailgatingDistance, minSlowdownDistance, maxSlowdownDistance);
-            
-            // Calculate speed multiplier: 0.0 at minSlowdownDistance, 0.5 at maxSlowdownDistance
-            float speedMultiplier = Mathf.Lerp(0.0f, 0.5f, (clampedDistance - minSlowdownDistance) / (maxSlowdownDistance - minSlowdownDistance));
-            
-            movementSpeed *= speedMultiplier;
-        }
-        else if (isInHeadOnCollision && headOnSpeedReduction > 0f)
-        {
-            // Apply head-on collision speed reduction (set by CalculateCharacterAvoidance)
-            movementSpeed *= headOnSpeedReduction;
-        }
-        else if (avoidanceForce.magnitude > 0.1f)
-        {
-            //movementSpeed *= 0.7f; // Slow down to 70% when avoiding
-        }
-
-        // Check for edge avoidance
+        // Check for edge avoidance and adjust rotation/speed if needed
         if (!HandleEdgeAvoidance(ref rotationDir, ref movementSpeed))
         {
-            return; // State changed to Turning, don't execute movement
+            return;
         }
 
         // Execute movement with the calculated rotation
@@ -921,5 +969,4 @@ public class NPCController : BaseCharController, IObjectPoolable, INetworkPrefab
         //cube.transform.position = spawnPos;
         //cube.name = order + label;
     }
-
 }
